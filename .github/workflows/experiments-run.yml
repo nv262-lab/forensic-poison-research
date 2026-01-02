@@ -1,0 +1,22 @@
+name: Run Experiments (manual-confirm)
+on:
+  workflow_dispatch:
+    inputs:
+      cloud: { required: true, default: aws }
+      scenarios: { required: true, default: all }
+permissions: { contents: read, id-token: write }
+jobs:
+  experiments:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: { python-version: 3.11 }
+      - run: pip install -r src/rag/requirements.txt
+      - uses: peter-evans/manual-approval@v2
+        with:
+          recipients: ${{ github.actor }}
+          instructions: |
+            Confirm running sandbox-safe simulated poisoning experiments: ${{ github.event.inputs.scenarios }} on cloud: ${{ github.event.inputs.cloud }}
+          timeout_minutes: 60
+      - run: python src/rag/experiments/runner.py --store-path data/faiss_index --scenarios "${{ github.event.inputs.scenarios }}" --count 5

@@ -1,0 +1,24 @@
+name: Sandbox Terraform Apply
+on:
+  workflow_dispatch:
+    inputs:
+      cloud: { required: true, default: aws }
+      action: { required: true, default: plan }
+permissions: { contents: read, id-token: write }
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v2
+        with: { terraform_version: 1.5.9 }
+      - run: ./infrastructure/terraform/scripts/generate-backend.sh
+      - run: terraform init -backend-config=backend.hcl
+        working-directory: infrastructure/terraform
+      - run: |
+          if [ "${{ github.event.inputs.action }}" = "plan" ]; then
+            terraform plan -var-file="sandboxes/${{ github.event.inputs.cloud }}/sandbox.tfvars" -out=tfplan
+          else
+            terraform apply -var-file="sandboxes/${{ github.event.inputs.cloud }}/sandbox.tfvars" -auto-approve
+          fi
+        working-directory: infrastructure/terraform

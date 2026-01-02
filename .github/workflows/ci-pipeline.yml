@@ -1,0 +1,21 @@
+name: CI Pipeline
+on: [push, pull_request]
+jobs:
+  unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with: { python-version: 3.11 }
+      - run: pip install -r src/rag/requirements.txt
+      - run: pytest -q src/rag/tests
+  terraform-validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v2
+        with: { terraform_version: 1.5.9 }
+      - run: |
+          cd infrastructure/terraform
+          terraform init -backend=false
+          terraform validate

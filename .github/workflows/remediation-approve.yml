@@ -1,0 +1,16 @@
+name: Remediation (manual)
+on:
+  workflow_dispatch:
+    inputs:
+      cloud: { required: true, default: aws }
+permissions: { contents: read, id-token: write }
+jobs:
+  remediation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: peter-evans/manual-approval@v2
+        with:
+          recipients: ${{ github.actor }}
+          instructions: Approve remediation restore for sandbox: ${{ github.event.inputs.cloud }}
+      - run: python src/rag/remediation/restore.py --sandbox-prefix forensic-research-001-sandbox

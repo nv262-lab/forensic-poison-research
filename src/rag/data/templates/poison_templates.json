@@ -1,0 +1,12 @@
+{
+  "label_inversion": ["SIM_LINV"],
+  "context_fragment_injection": ["TRIG-A-513"],
+  "embedding_attractor": ["ATTRACTOR_MARKER_HIGH_MAGNITUDE"],
+  "provenance_spoof": ["{\"source\":\"unauthorized-collector\"}"],
+  "shadow_token": ["SERVICE_SHADOW_TOKEN_ABCDEF"],
+  "popularity_pump": ["POPULARITY_SPIKE_INJECTION"],
+  "stale_signature_replay": ["STALE_SIGNATURE_MANIFEST"],
+  "invisible_backdoor": ["\u200bZERO_WIDTH_BACKDOOR\u200b"],
+  "delayed_activation": ["ACTIVATE_ON_DATE_2030-01-01"],
+  "cross_source_inconsistency": ["SOURCE_A_B_CONFLICT_MARKER"]
+}

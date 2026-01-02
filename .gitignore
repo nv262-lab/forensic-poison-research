@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+venv/
+.terraform/
+*.tfstate
+*.tfstate.*
+backend.hcl
+data/faiss_index/
+data/backups/
+secrets.yml
+keys_demo/
