@@ -1,4 +1,4 @@
-name: Run RAG Forensic Experiments
+name: Run RAG Forensic Experiments (create log stores)
 
 on:
   workflow_dispatch: {}
@@ -31,7 +31,7 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Export repo root to PYTHONPATH
+      - name: Export repo root to PYTHONPATH (persisted for later steps)
         run: |
           echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
 
@@ -62,6 +62,7 @@ jobs:
 
       - name: Run unit tests
         run: |
+          export PYTHONPATH="$PWD"
           pytest -q src/rag/tests
 
       - name: Configure AWS creds (env)
