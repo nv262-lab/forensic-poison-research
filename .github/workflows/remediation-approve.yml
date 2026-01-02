@@ -2,15 +2,31 @@ name: Remediation (manual)
 on:
   workflow_dispatch:
     inputs:
-      cloud: { required: true, default: aws }
-permissions: { contents: read, id-token: write }
+      cloud:
+        description: "Target cloud for remediation (aws, gcp, azure)"
+        required: true
+        default: "" 
+
+permissions:
+  contents: read
+  id-token: write
+
 jobs:
   remediation:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: peter-evans/manual-approval@v2
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Manual approval
+        uses: peter-evans/manual-approval@v2
         with:
           recipients: ${{ github.actor }}
-          instructions: Approve remediation restore for sandbox: ${{ github.event.inputs.cloud }}
-      - run: python src/rag/remediation/restore.py --sandbox-prefix forensic-research-001-sandbox
+          instructions: |
+            Approve remediation restore for sandbox.
+            Supported clouds: aws, gcp, azure
+            Selected: ${{ github.event.inputs.cloud }}
+
+      - name: Run remediation
+        run: |
+          python src/rag/remediation/restore.py --sandbox-prefix forensic-research-001-sandbox --cloud "${{ github.event.inputs.cloud }}"
