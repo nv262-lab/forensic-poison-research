@@ -16,6 +16,22 @@ env:
 jobs:
   provision-and-run:
     runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+      GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_LOG_RG: ${{ secrets.AZURE_LOG_RG }}
+      AZURE_LOG_STORAGE: ${{ secrets.AZURE_LOG_STORAGE }}
+      RAG_RSA_PUB: ${{ secrets.RAG_RSA_PUB }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -75,15 +91,16 @@ jobs:
           cat .terraform.lock.hcl || true
 
       - name: Configure AWS creds (env)
-        if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
+        if: ${{ env.AWS_ACCESS_KEY_ID != '' }}
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ env.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ env.AWS_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_DEFAULT_REGION }}
+          AWS_LOG_BUCKET: ${{ env.AWS_LOG_BUCKET }}
         run: |
           export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-          if [ -n "${{ secrets.AWS_LOG_BUCKET }}" ]; then
-            BUCKET="${{ secrets.AWS_LOG_BUCKET }}"
+          if [ -n "${AWS_LOG_BUCKET}" ]; then
+            BUCKET="${AWS_LOG_BUCKET}"
           else
             BUCKET="${AWS_LOG_BUCKET_DEFAULT}"
           fi
@@ -102,17 +119,18 @@ jobs:
           echo "AWS_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
       - name: Configure GCP creds & create bucket
-        if: ${{ secrets.GCP_SA_KEY != '' }}
+        if: ${{ env.GCP_SA_KEY != '' }}
         env:
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
-          GCP_REGION: ${{ secrets.GCP_REGION }}
+          GCP_SA_KEY: ${{ env.GCP_SA_KEY }}
+          GCP_PROJECT: ${{ env.GCP_PROJECT }}
+          GCP_REGION: ${{ env.GCP_REGION }}
+          GCP_LOG_BUCKET: ${{ env.GCP_LOG_BUCKET }}
         run: |
           echo "$GCP_SA_KEY" > /tmp/gcp_key.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_key.json
           gcloud auth activate-service-account --key-file=/tmp/gcp_key.json --project="$GCP_PROJECT" || true
-          if [ -n "${{ secrets.GCP_LOG_BUCKET }}" ]; then
-            BUCKET="${{ secrets.GCP_LOG_BUCKET }}"
+          if [ -n "${GCP_LOG_BUCKET}" ]; then
+            BUCKET="${GCP_LOG_BUCKET}"
           else
             BUCKET="${GCP_LOG_BUCKET_DEFAULT}"
           fi
@@ -128,22 +146,24 @@ jobs:
           echo "GCP_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
       - name: Configure Azure and create storage container
-        if: ${{ secrets.AZURE_CLIENT_ID != '' }}
+        if: ${{ env.AZURE_CLIENT_ID != '' }}
         env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          AZURE_CLIENT_ID: ${{ env.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ env.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ env.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ env.AZURE_SUBSCRIPTION_ID }}
+          AZURE_LOG_RG: ${{ env.AZURE_LOG_RG }}
+          AZURE_LOG_STORAGE: ${{ env.AZURE_LOG_STORAGE }}
         run: |
           az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null
           az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-          if [ -n "${{ secrets.AZURE_LOG_RG }}" ]; then
-            RG="${{ secrets.AZURE_LOG_RG }}"
+          if [ -n "${AZURE_LOG_RG}" ]; then
+            RG="${AZURE_LOG_RG}"
           else
             RG="${AZURE_LOG_RG_DEFAULT}"
           fi
-          if [ -n "${{ secrets.AZURE_LOG_STORAGE }}" ]; then
-            STORAGE_NAME="${{ secrets.AZURE_LOG_STORAGE }}"
+          if [ -n "${AZURE_LOG_STORAGE}" ]; then
+            STORAGE_NAME="${AZURE_LOG_STORAGE}"
           else
             STORAGE_NAME="${AZURE_LOG_STORAGE_DEFAULT}"
           fi
@@ -154,6 +174,7 @@ jobs:
             az group create -n "$RG" -l eastus || true
             echo "Created RG $RG"
           fi
+          # create storage account if name available, otherwise assume exists
           if az storage account check-name --name "$STORAGE_NAME" --query 'nameAvailable' | grep true >/dev/null 2>&1; then
             az storage account create -n "$STORAGE_NAME" -g "$RG" --sku Standard_LRS || true
             echo "Created storage account $STORAGE_NAME"
@@ -170,7 +191,7 @@ jobs:
 
       - name: Export RAG public key
         env:
-          RAG_RSA_PUB: ${{ secrets.RAG_RSA_PUB }}
+          RAG_RSA_PUB: ${{ env.RAG_RSA_PUB }}
         run: |
           if [ -n "$RAG_RSA_PUB" ]; then
             echo "$RAG_RSA_PUB" > /tmp/rag_rsa_pub.pem
@@ -187,7 +208,7 @@ jobs:
 
       - name: Build local index
         run: |
-          python3 -c "import json; docs=[_import_('json').loads(l) for l in open('src/rag/data/corpus/corpus.jsonl')]; from src.rag.vectorstore.faiss_store import FaissStore; FaissStore('data/faiss_index').build(docs)"
+          python3 -c "import json; docs=[import('json').loads(l) for l in open('src/rag/data/corpus/corpus.jsonl')]; from src.rag.vectorstore.faiss_store import FaissStore; FaissStore('data/faiss_index').build(docs)"
 
       - name: Run scenarios
         run: |
