@@ -33,14 +33,18 @@ jobs:
           pip install boto3 google-cloud-storage azure-identity azure-mgmt-resource azure-mgmt-storage azure-storage-blob || true
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
           unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install || true
-          curl -sSL https://sdk.cloud.google.com | bash > /dev/null || true
-          export PATH="$HOME/google-cloud-sdk/bin:$PATH"
+          # install gcloud if available in runner; non-fatal
+          if ! command -v gcloud >/dev/null 2>&1; then
+            curl -sSL https://sdk.cloud.google.com | bash > /dev/null || true
+            export PATH="$HOME/google-cloud-sdk/bin:$PATH"
+          fi
           sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release || true
           curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
-          sudo mv microsoft.gpg /etc/apt/trusted.gpg.d/
-          AZ_REPO=$(lsb_release -cs)
+          sudo mv microsoft.gpg /etc/apt/trusted.gpg.d/ || true
+          AZ_REPO=$(lsb_release -cs || echo focal)
           echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
-          sudo apt-get update && sudo apt-get install -y azure-cli || true
+          sudo apt-get update || true
+          sudo apt-get install -y azure-cli || true
 
       - name: Configure AWS creds (env)
         if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
@@ -50,24 +54,22 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
           export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-          # choose bucket name (secret override or default)
-          BUCKET="${{ secrets.AWS_LOG_BUCKET || env.AWS_LOG_BUCKET_DEFAULT }}"
+          BUCKET="${{ secrets.AWS_LOG_BUCKET }}" || true
+          if [ -z "${{ secrets.AWS_LOG_BUCKET }}" ]; then
+            BUCKET="${AWS_LOG_BUCKET_DEFAULT}"
+          fi
           echo "Using S3 bucket: $BUCKET"
-          # create bucket if not exists
           if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             echo "S3 bucket exists: $BUCKET"
           else
             aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint=${AWS_DEFAULT_REGION} || true
             echo "Created bucket $BUCKET"
           fi
-          # enable versioning
           aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled || true
-          # create CloudTrail (send management + data events to bucket)
           TRAIL_NAME="rag-forensic-trail-${{ github.run_id }}"
           aws cloudtrail create-trail --name "$TRAIL_NAME" --s3-bucket-name "$BUCKET" || true
           aws cloudtrail put-event-selectors --trail-name "$TRAIL_NAME" --event-selectors '[{"ReadWriteType":"All","IncludeManagementEvents":true,"DataResources":[{"Type":"AWS::S3::Object","Values":["arn:aws:s3:::'"$BUCKET"'/"]}]}]' || true
           aws cloudtrail start-logging --name "$TRAIL_NAME" || true
-          echo "AWS provisioning complete"
           echo "AWS_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
       - name: Configure GCP creds & create bucket
@@ -80,21 +82,20 @@ jobs:
           echo "$GCP_SA_KEY" > /tmp/gcp_key.json
           export GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_key.json
           gcloud auth activate-service-account --key-file=/tmp/gcp_key.json --project="$GCP_PROJECT" || true
-          BUCKET="${{ secrets.GCP_LOG_BUCKET || env.GCP_LOG_BUCKET_DEFAULT }}"
-          # create bucket if not exists
+          if [ -n "${{ secrets.GCP_LOG_BUCKET }}" ]; then
+            BUCKET="${{ secrets.GCP_LOG_BUCKET }}"
+          else
+            BUCKET="${GCP_LOG_BUCKET_DEFAULT}"
+          fi
           if gsutil ls -b "gs://$BUCKET" >/dev/null 2>&1; then
             echo "GCS bucket exists: $BUCKET"
           else
             gsutil mb -p "$GCP_PROJECT" -c STANDARD -l "${GCP_REGION:-us-central1}" "gs://$BUCKET"
             echo "Created GCS bucket $BUCKET"
           fi
-          # Enable bucket versioning
           gsutil versioning set on "gs://$BUCKET" || true
-          # Create logging sink to export audit logs to bucket (name sink with run id)
           SINK_NAME="rag-forensic-sink-${{ github.run_id }}"
-          # sink admin permission may be required; attempt to create
           gcloud logging sinks create "$SINK_NAME" "storage.googleapis.com/$BUCKET" --project="$GCP_PROJECT" --log-filter='resource.type="gcs_bucket" OR protoPayload.methodName:("storage.objects.insert" OR "storage.objects.update")' || true
-          echo "GCP provisioning complete"
           echo "GCP_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
       - name: Configure Azure and create storage container
@@ -107,32 +108,33 @@ jobs:
         run: |
           az login --service-principal -u "$AZURE_CLIENT_ID" -p "$AZURE_CLIENT_SECRET" --tenant "$AZURE_TENANT_ID" >/dev/null
           az account set --subscription "$AZURE_SUBSCRIPTION_ID"
-          RG="${{ secrets.AZURE_LOG_RG || env.AZURE_LOG_RG_DEFAULT }}"
-          STORAGE_NAME="${{ secrets.AZURE_LOG_STORAGE || env.AZURE_LOG_STORAGE_DEFAULT }}"
+          if [ -n "${{ secrets.AZURE_LOG_RG }}" ]; then
+            RG="${{ secrets.AZURE_LOG_RG }}"
+          else
+            RG="${AZURE_LOG_RG_DEFAULT}"
+          fi
+          if [ -n "${{ secrets.AZURE_LOG_STORAGE }}" ]; then
+            STORAGE_NAME="${{ secrets.AZURE_LOG_STORAGE }}"
+          else
+            STORAGE_NAME="${AZURE_LOG_STORAGE_DEFAULT}"
+          fi
           CONTAINER="rag-logs"
-          # create resource group if needed
           if az group show -n "$RG" >/dev/null 2>&1; then
             echo "RG exists: $RG"
           else
             az group create -n "$RG" -l eastus || true
             echo "Created RG $RG"
           fi
-          # create storage account if needed
           if az storage account check-name --name "$STORAGE_NAME" --query 'nameAvailable' | grep true >/dev/null 2>&1; then
             az storage account create -n "$STORAGE_NAME" -g "$RG" --sku Standard_LRS || true
             echo "Created storage account $STORAGE_NAME"
           else
             echo "Storage account may already exist: $STORAGE_NAME"
           fi
-          # get connection string
           CONN=$(az storage account show-connection-string -n "$STORAGE_NAME" -g "$RG" --query connectionString -o tsv)
           echo "AZURE_STORAGE_CONNECTION_STRING=$CONN" >> $GITHUB_ENV
-          # create container
           az storage container create --name "$CONTAINER" --connection-string "$CONN" || true
-          echo "Created container $CONTAINER in $STORAGE_NAME"
-          # enable blob versioning
           az storage blob service-properties update --enable-versioning true --account-name "$STORAGE_NAME" || true
-          echo "Azure provisioning complete"
           echo "AZURE_LOG_CONTAINER=$CONTAINER" >> $GITHUB_ENV
           echo "AZURE_LOG_STORAGE=$STORAGE_NAME" >> $GITHUB_ENV
           echo "AZURE_LOG_RG=$RG" >> $GITHUB_ENV
@@ -160,18 +162,13 @@ jobs:
 
       - name: Build local index
         run: |
-          python3 -c "import json; docs=[__import__('json').loads(l) for l in open('src/rag/data/corpus/corpus.jsonl')]; from src.rag.vectorstore.faiss_store import FaissStore; FaissStore('data/faiss_index').build(docs)"
+          python3 -c "import json; docs=[_import_('json').loads(l) for l in open('src/rag/data/corpus/corpus.jsonl')]; from src.rag.vectorstore.faiss_store import FaissStore; FaissStore('data/faiss_index').build(docs)"
 
       - name: Run scenarios
         run: |
           python3 src/rag/experiments/runner.py --scenarios all --count 1
 
       - name: Collect exported cloud logs (download from created stores)
-        env:
-          AWS_LOG_BUCKET: ${{ env.AWS_LOG_BUCKET }}
-          GCP_LOG_BUCKET: ${{ env.GCP_LOG_BUCKET }}
-          AZURE_LOG_CONTAINER: ${{ env.AZURE_LOG_CONTAINER }}
-          AZURE_STORAGE_CONNECTION_STRING: ${{ env.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           mkdir -p data/logs
           # AWS S3 fetch
