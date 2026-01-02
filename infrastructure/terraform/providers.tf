@@ -12,6 +12,10 @@ terraform {
       source  = "hashicorp/google"
       version = "~> 4.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 }
 
@@ -20,7 +24,7 @@ provider "aws" {
 }
 
 provider "azurerm" {
-  features = {}
+  features {}
   subscription_id = var.azure_subscription_id
 }
 
@@ -28,3 +32,5 @@ provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
 }
+
+provider "random" {}
