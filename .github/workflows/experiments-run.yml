@@ -1,4 +1,4 @@
-name: Run RAG Forensic Experiments (create log stores)
+name: Run RAG Forensic Experiments
 
 on:
   workflow_dispatch: {}
@@ -23,7 +23,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.10"
+          python-version: "3.11"
+
+      - name: Ensure repo root on PYTHONPATH for tests
+        run: |
+          echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+          export PYTHONPATH=$PWD
+          python -c "import sys; print('PYTHONPATH set to', sys.path[0])"
 
       - name: Install CLIs and libs
         run: |
@@ -33,13 +39,12 @@ jobs:
           pip install boto3 google-cloud-storage azure-identity azure-mgmt-resource azure-mgmt-storage azure-storage-blob || true
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
           unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install || true
-          # install gcloud if available in runner; non-fatal
           if ! command -v gcloud >/dev/null 2>&1; then
-            curl -sSL https://sdk.cloud.google.com | bash > /dev/null || true
+            curl -sSL https://sdk.cloud.google.com" | bash > /dev/null || true
             export PATH="$HOME/google-cloud-sdk/bin:$PATH"
           fi
           sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release || true
-          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg
+          curl -sL https://packages.microsoft.com/keys/microsoft.asc | gpg --dearmor > microsoft.gpg || true
           sudo mv microsoft.gpg /etc/apt/trusted.gpg.d/ || true
           AZ_REPO=$(lsb_release -cs || echo focal)
           echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
@@ -54,8 +59,9 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
         run: |
           export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
-          BUCKET="${{ secrets.AWS_LOG_BUCKET }}" || true
-          if [ -z "${{ secrets.AWS_LOG_BUCKET }}" ]; then
+          if [ -n "${{ secrets.AWS_LOG_BUCKET }}" ]; then
+            BUCKET="${{ secrets.AWS_LOG_BUCKET }}"
+          else
             BUCKET="${AWS_LOG_BUCKET_DEFAULT}"
           fi
           echo "Using S3 bucket: $BUCKET"
@@ -156,6 +162,10 @@ jobs:
         run: |
           pip install -r requirements.txt || true
 
+      - name: Run unit tests
+        run: |
+          pytest -q src/rag/tests
+
       - name: Seed corpus
         run: |
           python3 src/rag/data/seed_generator.py
@@ -171,15 +181,12 @@ jobs:
       - name: Collect exported cloud logs (download from created stores)
         run: |
           mkdir -p data/logs
-          # AWS S3 fetch
           if [ -n "${AWS_LOG_BUCKET:-}" ]; then
             python3 tools/collect_cloud_logs.py --provider aws --bucket "${AWS_LOG_BUCKET}" --prefix "" --out data/logs/aws || true
           fi
-          # GCP fetch
           if [ -n "${GCP_LOG_BUCKET:-}" ]; then
             python3 tools/collect_cloud_logs.py --provider gcp --bucket "${GCP_LOG_BUCKET}" --prefix "" --out data/logs/gcp || true
           fi
-          # Azure fetch
           if [ -n "${AZURE_LOG_CONTAINER:-}" ]; then
             export AZURE_STORAGE_CONNECTION_STRING="${AZURE_STORAGE_CONNECTION_STRING}"
             python3 tools/collect_cloud_logs.py --provider azure --container "${AZURE_LOG_CONTAINER}" --prefix "" --out data/logs/azure || true
