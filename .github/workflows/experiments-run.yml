@@ -77,6 +77,10 @@ jobs:
           pip install -r requirements.txt || true
           pip install -e . || true
 
+      - name: Generate demo keys if missing
+        run: |
+          python3 tools/keygen_demo.py || true
+          
       - name: Run unit tests
         run: |
           export PYTHONPATH="$PWD"
@@ -197,10 +201,6 @@ jobs:
             echo "$RAG_RSA_PUB" > /tmp/rag_rsa_pub.pem
             chmod 600 /tmp/rag_rsa_pub.pem
           fi
-
-      - name: Generate demo keys if missing
-        run: |
-          python3 tools/keygen_demo.py || true
 
       - name: Seed corpus
         run: |
