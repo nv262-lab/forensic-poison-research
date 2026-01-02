@@ -31,6 +31,10 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Export repo root to PYTHONPATH
+        run: |
+          echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
       - name: Install CLIs and libs
         run: |
           sudo apt-get update -y
@@ -51,14 +55,14 @@ jobs:
           sudo apt-get update || true
           sudo apt-get install -y azure-cli || true
 
-      - name: Export repo root to PYTHONPATH (safe fallback)
-        run: |
-          echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
-
       - name: Install python deps and package
         run: |
           pip install -r requirements.txt || true
           pip install -e . || true
+
+      - name: Run unit tests
+        run: |
+          pytest -q src/rag/tests
 
       - name: Configure AWS creds (env)
         if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
@@ -166,10 +170,6 @@ jobs:
       - name: Generate demo keys if missing
         run: |
           python3 tools/keygen_demo.py || true
-
-      - name: Run unit tests
-        run: |
-          pytest -q src/rag/tests
 
       - name: Seed corpus
         run: |
