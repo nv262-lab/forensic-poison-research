@@ -20,16 +20,16 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.5.7"
+          terraform_wrapper: true
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: "3.11"
-
-      - name: Ensure repo root on PYTHONPATH for tests
-        run: |
-          echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
-          export PYTHONPATH=$PWD
-          python -c "import sys; print('PYTHONPATH set to', sys.path[0])"
 
       - name: Install CLIs and libs
         run: |
@@ -40,7 +40,7 @@ jobs:
           curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
           unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install || true
           if ! command -v gcloud >/dev/null 2>&1; then
-            curl -sSL https://sdk.cloud.google.com" | bash > /dev/null || true
+            curl -sSL https://sdk.cloud.google.com | bash > /dev/null || true
             export PATH="$HOME/google-cloud-sdk/bin:$PATH"
           fi
           sudo apt-get install -y apt-transport-https ca-certificates curl gnupg lsb-release || true
@@ -50,6 +50,15 @@ jobs:
           echo "deb [arch=amd64] https://packages.microsoft.com/repos/azure-cli/ $AZ_REPO main" | sudo tee /etc/apt/sources.list.d/azure-cli.list
           sudo apt-get update || true
           sudo apt-get install -y azure-cli || true
+
+      - name: Export repo root to PYTHONPATH (safe fallback)
+        run: |
+          echo "PYTHONPATH=$PWD" >> $GITHUB_ENV
+
+      - name: Install python deps and package
+        run: |
+          pip install -r requirements.txt || true
+          pip install -e . || true
 
       - name: Configure AWS creds (env)
         if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
@@ -157,10 +166,6 @@ jobs:
       - name: Generate demo keys if missing
         run: |
           python3 tools/keygen_demo.py || true
-
-      - name: Install python deps for repo
-        run: |
-          pip install -r requirements.txt || true
 
       - name: Run unit tests
         run: |
