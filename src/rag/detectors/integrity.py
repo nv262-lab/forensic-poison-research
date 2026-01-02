@@ -6,9 +6,13 @@ PRIV_PATH = "keys_demo/rsa_priv.pem"
 PUB_PATH = "keys_demo/rsa_pub.pem"
 
 def _read_key(env_name, default_path):
+    # If we have a repo-generated key file, prefer it (ensures sign+verify use same pair)
+    if os.path.exists(default_path):
+        return open(default_path, "rb").read()
+
     val = os.environ.get(env_name)
     if not val:
-        return open(default_path, "rb").read()
+        raise FileNotFoundError(f"no key at {default_path} and env {env_name} is not set")
     v = val.strip()
     # treat as PEM contents if it starts with PEM header, otherwise treat as path
     if v.startswith("-----BEGIN"):
