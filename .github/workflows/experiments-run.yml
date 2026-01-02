@@ -57,6 +57,7 @@ jobs:
 
       - name: Install python deps and package
         run: |
+          python -m pip install --upgrade pip
           pip install -r requirements.txt || true
           pip install -e . || true
 
@@ -64,6 +65,14 @@ jobs:
         run: |
           export PYTHONPATH="$PWD"
           pytest -q src/rag/tests
+
+      - name: Debug Terraform init
+        if: always()
+        run: |
+          terraform -version || true
+          ls -la || true
+          terraform init -input=false -upgrade -lockfile=auto || true
+          cat .terraform.lock.hcl || true
 
       - name: Configure AWS creds (env)
         if: ${{ secrets.AWS_ACCESS_KEY_ID != '' }}
