@@ -15,7 +15,7 @@ jobs:
       - name: Install deps and package
         run: |
           python -m pip install --upgrade pip
-          pip install -r src/rag/requirements.txt || true
+          pip install -r requirements.txt || true
           pip install -e . || true
 
       - name: Generate demo RSA keys
