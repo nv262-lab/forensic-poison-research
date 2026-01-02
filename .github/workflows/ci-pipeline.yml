@@ -18,6 +18,11 @@ jobs:
           pip install -r src/rag/requirements.txt || true
           pip install -e . || true
 
+      - name: Generate demo RSA keys
+        run: |
+          python3 tools/keygen_demo.py || true
+          ls -la keys_demo || true
+
       - name: Run unit tests
         run: |
           export PYTHONPATH="${PYTHONPATH:-}:$PWD"
