@@ -5,17 +5,36 @@ on:
       cloud: { required: true, default: aws }
       action: { required: true, default: plan }
 permissions: { contents: read, id-token: write }
+
 jobs:
   apply:
     runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     steps:
       - uses: actions/checkout@v4
+
       - uses: hashicorp/setup-terraform@v2
-        with: { terraform_version: 1.5.9 }
-      - run: ./infrastructure/terraform/scripts/generate-backend.sh
-      - run: terraform init -backend-config=backend.hcl
+        with:
+          terraform_version: 1.5.9
+
+      - name: Generate backend
+        run: ./infrastructure/terraform/scripts/generate-backend.sh
+
+      - name: Terraform init
+        run: terraform init -backend-config=backend.hcl
         working-directory: infrastructure/terraform
-      - run: |
+
+      - name: Terraform plan/apply
+        run: |
           if [ "${{ github.event.inputs.action }}" = "plan" ]; then
             terraform plan -var-file="sandboxes/${{ github.event.inputs.cloud }}/sandbox.tfvars" -out=tfplan
           else
