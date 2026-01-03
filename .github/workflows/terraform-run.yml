@@ -1,0 +1,133 @@
+name: terraform-run
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  ci-terraform:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      TF_WORKING_DIR: infra
+      # Derive repo-safe name and run id for resource naming
+      CI_REPO: ${{ github.repository }}
+      CI_RUN_ID: ${{ github.run_id }}
+      AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Make script executable
+        run: chmod +x .github/scripts/setup_cloud_logs.sh
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v2
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN || '' }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup gcloud
+        uses: google-github-actions/setup-gcloud@v1
+        with:
+          service_account_key: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ secrets.GCP_PROJECT }}
+          export_default_credentials: true
+
+      - name: Install CLI tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install awscli
+          gcloud --quiet components update || true
+
+      - name: Configure cloud log buckets (project-relative names)
+        env:
+          CI_REPO: ${{ env.CI_REPO }}
+          CI_RUN_ID: ${{ env.CI_RUN_ID }}
+          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
+          # Optional: override names by setting these secrets
+          AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET || '' }}
+          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
+          GCP_REGION: ${{ env.GCP_REGION }}
+          GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET || '' }}
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: .github/scripts/setup_cloud_logs.sh
+
+      - name: Validate AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Ensure Terraform backend (S3 + DynamoDB) exists
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
+          TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TF_STATE_BUCKET:-}" ]; then
+            echo "TF_STATE_BUCKET is not set; skipping backend provisioning"
+            exit 0
+          fi
+          if ! aws s3api head-bucket --bucket "${TF_STATE_BUCKET}" 2>/dev/null; then
+            if [ "${AWS_REGION}" = "us-east-1" ]; then
+              aws s3api create-bucket --bucket "${TF_STATE_BUCKET}"
+            else
+              aws s3api create-bucket --bucket "${TF_STATE_BUCKET}" --create-bucket-configuration LocationConstraint="${AWS_REGION}"
+            fi
+          fi
+          aws s3api put-bucket-versioning --bucket "${TF_STATE_BUCKET}" --versioning-configuration Status=Enabled || true
+          if [ -n "${TF_LOCK_TABLE:-}" ]; then
+            if ! aws dynamodb describe-table --table-name "${TF_LOCK_TABLE}" 2>/dev/null; then
+              aws dynamodb create-table \
+                --table-name "${TF_LOCK_TABLE}" \
+                --attribute-definitions AttributeName=LockID,AttributeType=S \
+                --key-schema AttributeName=LockID,KeyType=HASH \
+                --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
+              aws dynamodb wait table_exists --table-name "${TF_LOCK_TABLE}"
+            fi
+          fi
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: '1.5.0'
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
+          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
+          TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
+          TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX || '' }}
+        run: |
+          if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
+            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="key=${TF_STATE_KEY}" -backend-config="region=${AWS_REGION}" -backend-config="dynamodb_table=${TF_LOCK_TABLE}" -input=false
+          elif [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_PREFIX:-}" ]; then
+            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=${TF_STATE_PREFIX}" -input=false
+          else
+            terraform init -input=false
+          fi
+
+      - name: Terraform fmt & validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform fmt -check -recursive
+          terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform plan -out=tfplan -input=false
+
+      - name: Terraform apply (auto-approve on main)
+        if: github.ref == 'refs/heads/main' && success()
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -input=false -auto-approve tfplan
