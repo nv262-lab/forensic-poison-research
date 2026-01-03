@@ -41,7 +41,7 @@ jobs:
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN || '' }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Setup gcloud
@@ -62,11 +62,11 @@ jobs:
           CI_REPO: ${{ env.CI_REPO }}
           CI_RUN_ID: ${{ env.CI_RUN_ID }}
           AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
-          AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET || '' }}
+          AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET }}
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.GCP_REGION }}
-          GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET || '' }}
-          GCP_LOG_SINK_NAME: ${{ secrets.GCP_LOG_SINK_NAME || '' }}
+          GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET }}
+          GCP_LOG_SINK_NAME: ${{ secrets.GCP_LOG_SINK_NAME }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: .github/scripts/setup_cloud_logs.sh || true
 
@@ -115,7 +115,7 @@ jobs:
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
-          TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX || '' }}
+          TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX }}
           AWS_REGION: ${{ env.AWS_REGION }}
         run: |
           if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
@@ -129,11 +129,11 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          TF_VAR_gcp_service_account_key=${{ secrets.GCP_SA_KEY }}
-          TF_VAR_azure_client_id=${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}
-          TF_VAR_azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}
-          TF_VAR_azure_subscription_id =${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          TF_VAR_gcp_service_account_key: ${{ secrets.GCP_SA_KEY }}
+          TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+          TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
+          TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform plan -out=tfplan -input=false
 
       - name: Terraform apply (auto-approve on main)
