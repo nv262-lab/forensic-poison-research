@@ -141,40 +141,6 @@ jobs:
           echo "TF_VAR_azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" >> $GITHUB_ENV
           echo "TF_VAR_azure_subscription_id =${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
       # ------------------------
-      # Run backend workspace (create remote backend resources)
-      # ------------------------
-      - name: Backend - Terraform Init
-        working-directory: ${{ env.TF_BACKEND_DIR }}
-        run: terraform init -input=false
-
-      - name: Backend - Terraform Apply
-        working-directory: ${{ env.TF_BACKEND_DIR }}
-        run: terraform apply -auto-approve -input=false
-
-      - name: Capture backend outputs
-        id: backend_outputs
-        working-directory: ${{ env.TF_BACKEND_DIR }}
-        run: terraform output -json > tf_backend_outputs.json && cat tf_backend_outputs.json
-
-      - name: Export backend outputs to env
-        working-directory: ${{ env.TF_BACKEND_DIR }}
-        run: |
-          if [ -f tf_backend_outputs.json ]; then
-            jq -r 'to_entries[] | "§.key)=@customBackSlash(.value.value)"' tf_backend_outputs.json > backend_envs.sh@customNewLine            # transform to export lines@customNewLine            sed -n 's/^@customBackSlash(.!§=§.!§$/export \1="\2"/p' backend_envs.sh > backend_envs_export.sh || true
-            cat backend_envs_export.sh
-            echo "BACKEND_OUTPUTS=backend_envs_export.sh" >> $GITHUB_ENV
-          fi
-
-      - name: Load backend outputs into environment
-        if: always()
-        run: |
-          if [ -f backend_envs_export.sh ]; then
-            set -a
-            . ./backend_envs_export.sh
-            set +a
-          fi
-
-      # ------------------------
       # Existing per-cloud log store creation steps (use repo secrets and backend outputs)
       # ------------------------
 
