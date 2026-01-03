@@ -84,9 +84,9 @@ variable "azure_client_secret" {
   default = ""
 }
 
-variable "prefix" {
+variable "azprefix" {
   type    = string
-  default = "rag-forensics-sandbox"
+  default = "rag-forensics"
 }
 
 variable "azure_tenant_id" {
