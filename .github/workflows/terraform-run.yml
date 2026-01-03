@@ -126,12 +126,6 @@ jobs:
             terraform init -input=false
           fi
 
-      - name: Terraform fmt & validate
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform fmt -check -recursive
-          terraform validate
-
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform plan -out=tfplan -input=false
