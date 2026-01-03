@@ -3,13 +3,9 @@
 Collect cloud logs into a local directory.
 
 Usage examples:
-  python tools/collect_cloud_logs.py --provider aws --bucket my-bucket --prefix logs/ --out data/logs/aws
-  python tools/collect_cloud_logs.py --provider gcp --bucket my-gcs-bucket --prefix logs/ --out data/logs/gcp --gcp-access-token "$GCP_ACCESS_TOKEN" --gcp-project my-project
-  python tools/collect_cloud_logs.py --provider azure --container rag-logs --out data/logs/azure
+  python tools/collect_cloud_logs.py --provider gcp --bucket my-gcs-bucket --out data/logs/gcp --gcp-access-token "$GCP_ACCESS_TOKEN" --gcp-project my-project
 
-GCP auth:
-- Provide an OAuth2 access token via --gcp-access-token or env GCP_ACCESS_TOKEN (recommended when using repo secrets).
-- Optionally provide GCP project via --gcp-project or env GCP_PROJECT.
+Supports providing an OAuth2 access token via --gcp-access-token or GCP_ACCESS_TOKEN env var.
 """
 
 from __future__ import annotations
@@ -19,13 +15,15 @@ import sys
 import pathlib
 import logging
 from pathlib import Path
-from typing import Iterable, Dict, Any, Optional
+from typing import Optional
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger("collect_cloud_logs")
 
+
 def ensure_dir(path: str | Path):
     pathlib.Path(path).mkdir(parents=True, exist_ok=True)
+
 
 def collect_aws(bucket: str, prefix: str, out_dir: str):
     import boto3
@@ -52,22 +50,17 @@ def collect_aws(bucket: str, prefix: str, out_dir: str):
                 log.error("Failed to download %s: %s", key, e)
     log.info("AWS: downloaded %d objects", downloaded)
 
+
 def collect_gcp(bucket: str, prefix: str, out_dir: str, access_token: Optional[str] = None, project: Optional[str] = None):
-    """
-    Collect objects from a GCS bucket.
-    If access_token is provided it will be used to create credentials.
-    """
     from google.cloud import storage
     from google.api_core.exceptions import GoogleAPIError
 
-    # Prefer explicit token argument, then env var
     token = access_token or os.environ.get("GCP_ACCESS_TOKEN")
     project = project or os.environ.get("GCP_PROJECT")
 
     client = None
     if token:
         try:
-            # Use google.oauth2.credentials.Credentials with the access token
             from google.oauth2.credentials import Credentials
             creds = Credentials(token=token)
             log.info("Using provided GCP access token for authentication")
@@ -76,28 +69,30 @@ def collect_gcp(bucket: str, prefix: str, out_dir: str, access_token: Optional[s
             log.error("Failed to construct GCP client with access token: %s", e)
             raise
     else:
-        # Fall back to ADC (may raise if not configured)
         log.info("No GCP access token provided; attempting Application Default Credentials")
         client = storage.Client(project=project)
-
-    bucket_obj = client.bucket(bucket)
-    blobs = client.list_blobs(bucket, prefix=prefix or None)
 
     ensure_dir(out_dir)
     downloaded = 0
 
-    for blob in blobs:
-        key = blob.name
-        rel_path = key[len(prefix) :] if prefix and key.startswith(prefix) else key
-        target = os.path.join(out_dir, rel_path)
-        ensure_dir(os.path.dirname(target) or out_dir)
-        try:
-            log.info("Downloading gs://%s/%s -> %s", bucket, key, target)
-            blob.download_to_filename(target)
-            downloaded += 1
-        except GoogleAPIError as e:
-            log.error("Failed to download %s: %s", key, e)
+    try:
+        blobs = client.list_blobs(bucket, prefix=prefix or None)
+        for blob in blobs:
+            key = blob.name
+            rel_path = key[len(prefix) :] if prefix and key.startswith(prefix) else key
+            target = os.path.join(out_dir, rel_path)
+            ensure_dir(os.path.dirname(target) or out_dir)
+            try:
+                log.info("Downloading gs://%s/%s -> %s", bucket, key, target)
+                blob.download_to_filename(target)
+                downloaded += 1
+            except GoogleAPIError as e:
+                log.error("Failed to download %s: %s", key, e)
+    except Exception as e:
+        log.error("GCP list/download error: %s", e)
+
     log.info("GCP: downloaded %d objects", downloaded)
+
 
 def collect_azure(container: str, prefix: str, out_dir: str):
     from azure.storage.blob import ContainerClient
@@ -119,7 +114,6 @@ def collect_azure(container: str, prefix: str, out_dir: str):
         ensure_dir(os.path.dirname(target) or out_dir)
         try:
             log.info("Downloading azure://%s/%s -> %s", container, key, target)
-            # download_blob returns StorageStreamDownloader; use readinto or download_blob().readall()
             downloader = client.download_blob(key)
             with open(target, "wb") as f:
                 f.write(downloader.readall())
@@ -127,6 +121,7 @@ def collect_azure(container: str, prefix: str, out_dir: str):
         except AzureError as e:
             log.error("Failed to download %s: %s", key, e)
     log.info("AZURE: downloaded %d objects", downloaded)
+
 
 def main():
     p = argparse.ArgumentParser(description="Collect cloud logs into a local directory")
@@ -158,6 +153,7 @@ def main():
     except Exception as e:
         log.exception("Failed to collect logs: %s", e)
         sys.exit(2)
+
 
 if __name__ == "__main__":
     main()
