@@ -38,6 +38,7 @@ variable "gcp_project" {
 variable "gcp_service_account_key" {
   description = "The path to the service account key file"
   type        = string
+  default     = "/tmp/gcp_key.json"
 }
 
 variable "gcp_region" {
