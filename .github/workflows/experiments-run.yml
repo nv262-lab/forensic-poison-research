@@ -81,7 +81,10 @@ jobs:
       - name: Make setup script executable
         run: chmod +x .github/scripts/setup_cloud_logs.sh
 
-      # Authenticate to AWS using repository secrets
+      # ------------------------
+      # Authenticate to clouds BEFORE running terraform backend workspace
+      # ------------------------
+
       - name: Configure AWS credentials (action)
         uses: aws-actions/configure-aws-credentials@v2
         with:
@@ -93,7 +96,6 @@ jobs:
       - name: Validate AWS identity
         run: aws sts get-caller-identity
 
-      # Authenticate to GCP using repository secrets
       - name: Setup gcloud (action)
         uses: google-github-actions/setup-gcloud@v1
         with:
@@ -101,10 +103,16 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT }}
           export_default_credentials: true
 
+      - name: Export GOOGLE_APPLICATION_CREDENTIALS
+        if: ${{ secrets.GCP_SA_KEY != '' }}
+        run: |
+          echo "${{ secrets.GCP_SA_KEY }}" > /tmp/gcp_key.json
+          chmod 600 /tmp/gcp_key.json
+          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_key.json" >> $GITHUB_ENV
+
       - name: Validate GCP identity
         run: gcloud auth list --format="value(account)" || true
 
-      # Authenticate to Azure using repository secrets
       - name: Login to Azure (action)
         uses: azure/login@v1
         with:
@@ -119,26 +127,30 @@ jobs:
       - name: Validate Azure account
         run: az account show --query "{id:id, user:user.name}" -o json
 
-      # Run backend workspace first (create backend resources)
+      # Export TF_VARs for backend apply (from repository secrets)
+      - name: Export TF_VARs for backend workspace
+        run: |
+          echo "TF_VAR_aws_region=${{ secrets.AWS_DEFAULT_REGION }}" >> $GITHUB_ENV
+          echo "TF_VAR_gcp_project=${{ secrets.GCP_PROJECT }}" >> $GITHUB_ENV
+          echo "TF_VAR_gcp_region=${{ secrets.GCP_REGION || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_azure_rg_name=${{ secrets.BACKEND_AZURE_RG || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_azure_storage_account=${{ secrets.BACKEND_AZURE_STORAGE_ACCOUNT || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_tf_state_bucket=${{ secrets.BACKEND_TF_STATE_BUCKET || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_tf_lock_table=${{ secrets.BACKEND_TF_LOCK_TABLE || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_gcs_bucket=${{ secrets.BACKEND_GCS_BUCKET || '' }}" >> $GITHUB_ENV
+          echo "TF_VAR_create_aws=${{ secrets.BACKEND_CREATE_AWS || 'true' }}" >> $GITHUB_ENV
+          echo "TF_VAR_create_gcp=${{ secrets.BACKEND_CREATE_GCP || 'false' }}" >> $GITHUB_ENV
+          echo "TF_VAR_create_azure=${{ secrets.BACKEND_CREATE_AZURE || 'false' }}" >> $GITHUB_ENV
+
+      # ------------------------
+      # Run backend workspace (create remote backend resources)
+      # ------------------------
       - name: Backend - Terraform Init
         working-directory: ${{ env.TF_BACKEND_DIR }}
         run: terraform init -input=false
 
       - name: Backend - Terraform Apply
         working-directory: ${{ env.TF_BACKEND_DIR }}
-        env:
-          TF_VAR_aws_region: ${{ secrets.AWS_DEFAULT_REGION }}
-          TF_VAR_tf_state_bucket: ${{ secrets.BACKEND_TF_STATE_BUCKET || '' }}
-          TF_VAR_tf_lock_table: ${{ secrets.BACKEND_TF_LOCK_TABLE || '' }}
-          TF_VAR_gcp_project: ${{ secrets.GCP_PROJECT || '' }}
-          TF_VAR_gcs_bucket: ${{ secrets.BACKEND_GCS_BUCKET || '' }}
-          TF_VAR_gcp_region: ${{ secrets.GCP_REGION || '' }}
-          TF_VAR_azure_rg_name: ${{ secrets.BACKEND_AZURE_RG || '' }}
-          TF_VAR_azure_storage_account: ${{ secrets.BACKEND_AZURE_STORAGE_ACCOUNT || '' }}
-          TF_VAR_azure_container_name: ${{ secrets.BACKEND_AZURE_CONTAINER || 'tfstate' }}
-          TF_VAR_create_aws: ${{ secrets.BACKEND_CREATE_AWS || 'true' }}
-          TF_VAR_create_gcp: ${{ secrets.BACKEND_CREATE_GCP || 'false' }}
-          TF_VAR_create_azure: ${{ secrets.BACKEND_CREATE_AZURE || 'false' }}
         run: terraform apply -auto-approve -input=false
 
       - name: Capture backend outputs
@@ -150,7 +162,7 @@ jobs:
         working-directory: ${{ env.TF_BACKEND_DIR }}
         run: |
           if [ -f tf_backend_outputs.json ]; then
-            jq -r 'to_entries[] | "§.key)=@customBackSlash(.value.value)"' tf_backend_outputs.json > backend_envs.sh@customNewLine            sed -n 's/^@customBackSlash(.!§=§.!§$/export \1="\2"/p' backend_envs.sh > backend_envs_export.sh || true
+            jq -r 'to_entries[] | "§.key)=@customBackSlash(.value.value)"' tf_backend_outputs.json > backend_envs.sh@customNewLine            # transform to export lines@customNewLine            sed -n 's/^@customBackSlash(.!§=§.!§$/export \1="\2"/p' backend_envs.sh > backend_envs_export.sh || true
             cat backend_envs_export.sh
             echo "BACKEND_OUTPUTS=backend_envs_export.sh" >> $GITHUB_ENV
           fi
@@ -164,7 +176,10 @@ jobs:
             set +a
           fi
 
-      # Existing per-cloud log store creation steps (use repository secrets and backend outputs)
+      # ------------------------
+      # Existing per-cloud log store creation steps (use repo secrets and backend outputs)
+      # ------------------------
+
       - name: Configure AWS creds (env)
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
