@@ -28,14 +28,17 @@ jobs:
         run: |
           TF_KEY_PATH="${GITHUB_WORKSPACE}/gcp-key.json"
           payload="${{ secrets.GCP_SA_KEY }}"
+
           # Try base64 decode if it looks like base64
           if printf '%s' "$payload" | grep -Eq '^[A-Za-z0-9+/=]+$' && [ ${#payload} -gt 100 ]; then
             payload=$(printf '%s' "$payload" | tr -d '\r\n' | base64 --decode 2>/dev/null || printf '%s' "$payload")
           fi
+
           # Strip surrounding quotes
           payload=$(printf '%s' "$payload" | sed -E 's/^"(.*)"$/\1/' | sed 's/\\"/"/g')
           printf '%s' "$payload" > "$TF_KEY_PATH"
           chmod 600 "$TF_KEY_PATH"
+
           if ! jq -e . "$TF_KEY_PATH" >/dev/null; then
             echo "GCP key is not valid JSON"
             exit 1
