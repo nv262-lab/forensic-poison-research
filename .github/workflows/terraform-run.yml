@@ -24,11 +24,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Write GCP service account key
-        run: |
-          echo "${{ secrets.GCP_SA_KEY }}" > /tmp/gcp_key.json
-          chmod 600 /tmp/gcp_key.json
-          echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_key.json" >> $GITHUB_ENV
+      - name: Set GCP Access Token
+        run: echo "GCP_ACCESS_TOKEN=${{ secrets.GCP_ACCESS_TOKEN }}" >> $GITHUB_ENV
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -38,13 +35,11 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup gcloud
-        uses: google-github-actions/setup-gcloud@v1
-        with:
-          service_account_key: ${{ secrets.GCP_SA_KEY }}
-          project_id: ${{ secrets.GCP_PROJECT }}
-          export_default_credentials: true
-
+      - name: Setup gcloud with Access Token
+        run: |
+          echo "Activating GCP credentials..."
+          echo "${{ secrets.GCP_ACCESS_TOKEN }}" | gcloud auth activate-service-account --key-file=-
+          
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -53,25 +48,19 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_key.json
+          GCP_ACCESS_TOKEN: ${{ secrets.GCP_ACCESS_TOKEN }} # Use directly
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
           TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX }}
           AWS_REGION: ${{ env.AWS_REGION }}
         run: |
-          if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
-            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="key=${TF_STATE_KEY}" -backend-config="region=${AWS_REGION}" -backend-config="dynamodb_table=${TF_LOCK_TABLE}" -input=false
-          elif [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_PREFIX:-}" ]; then
-            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=${TF_STATE_PREFIX}" -input=false
-          else
-            terraform init -input=false
-          fi
+          terraform init -input=false
 
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp_key.json
+          GCP_ACCESS_TOKEN: ${{ secrets.GCP_ACCESS_TOKEN }} # Use directly
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
