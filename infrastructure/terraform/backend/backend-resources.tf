@@ -2,10 +2,22 @@ terraform {
   required_version = ">= 1.3.0"
 
   required_providers {
-    aws     = { source = "hashicorp/aws",     version = ">= 4.0" }
-    google  = { source = "hashicorp/google",  version = ">= 4.0" }
-    azurerm = { source = "hashicorp/azurerm", version = ">= 3.0" }
-    random  = { source = "hashicorp/random",  version = ">= 3.0" }
+    aws     = {
+      source  = "hashicorp/aws"
+      version = ">= 4.0"
+    }
+    google  = {
+      source  = "hashicorp/google"
+      version = ">= 4.0"
+    }
+    azurerm = {
+      source  = "hashicorp/azurerm"
+      version = ">= 3.0"
+    }
+    random  = {
+      source  = "hashicorp/random"
+      version = ">= 3.0"
+    }
   }
 }
 
@@ -19,16 +31,18 @@ resource "random_id" "suffix" {
 locals {
   suffix = length(random_id.suffix) > 0 ? random_id.suffix[0].hex : "manual"
 
-  final_tf_state_bucket = length(trimspace(var.tf_state_bucket)) > 0 ? var.tf_state_bucket : "tf-state-${local.suffix}-${substr(var.aws_region,0,6)}"
+  final_tf_state_bucket = length(trimspace(var.tf_state_bucket)) > 0 ? var.tf_state_bucket : "tf-state-${local.suffix}-${substr(var.aws_region, 0, 6)}"
   final_tf_lock_table   = length(trimspace(var.tf_lock_table)) > 0 ? var.tf_lock_table : "tf-lock-${local.suffix}"
-  final_gcs_bucket      = length(trimspace(var.gcs_bucket)) > 0 ? var.gcs_bucket : "tf-state-${local.suffix}-${substr(var.gcp_region,0,6)}"
+  final_gcs_bucket      = length(trimspace(var.gcs_bucket)) > 0 ? var.gcs_bucket : "tf-state-${local.suffix}-${substr(var.gcp_region, 0, 6)}"
   final_azure_rg        = length(trimspace(var.azure_rg_name)) > 0 ? var.azure_rg_name : "tf-backend-rg-${local.suffix}"
 
   generated_azure_storage = lower(regexreplace("tfstate${local.suffix}", "/[^a-z0-9]/", ""))
   final_azure_storage     = length(trimspace(var.azure_storage_account)) > 0 ? var.azure_storage_account : local.generated_azure_storage
 }
 
-# AWS S3 bucket + DynamoDB lock table
+# --------------------
+# AWS: S3 bucket + DynamoDB table for locking
+# --------------------
 resource "aws_s3_bucket" "tf_state" {
   count  = var.create_aws ? 1 : 0
   bucket = local.final_tf_state_bucket
@@ -88,7 +102,9 @@ resource "aws_dynamodb_table" "tf_lock" {
   }
 }
 
-# GCP: GCS bucket
+# --------------------
+# GCP: GCS bucket for state
+# --------------------
 resource "google_storage_bucket" "tf_state" {
   count         = var.create_gcp ? 1 : 0
   name          = local.final_gcs_bucket
@@ -104,7 +120,9 @@ resource "google_storage_bucket" "tf_state" {
   }
 }
 
-# Azure: RG, storage account and container
+# --------------------
+# Azure: Storage account + container for state
+# --------------------
 resource "azurerm_resource_group" "backend" {
   count    = var.create_azure ? 1 : 0
   name     = local.final_azure_rg
@@ -139,7 +157,9 @@ resource "azurerm_storage_container" "tfstate" {
   container_access_type = "private"
 }
 
+# --------------------
 # Outputs
+# --------------------
 output "aws_tf_state_bucket" {
   value       = var.create_aws ? try(aws_s3_bucket.tf_state[0].bucket, "") : ""
   description = "AWS S3 bucket name for Terraform state (empty if not created)"
@@ -158,9 +178,4 @@ output "gcp_gcs_bucket" {
 output "azure_storage_account" {
   value       = var.create_azure ? try(azurerm_storage_account.tfstate[0].name, "") : ""
   description = "Azure storage account name (empty if not created)"
-}
-
-output "azure_container_name" {
-  value       = var.create_azure ? try(azurerm_storage_container.tfstate[0].name, "") : ""
-  description = "Azure storage container name (empty if not created)"
 }
