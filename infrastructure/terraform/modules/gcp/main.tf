@@ -11,16 +11,24 @@ resource "google_storage_bucket" "bucket" {
   versioning {
     enabled = true
   }
+
+  # Optional: Set lifecycle rules if needed
+  lifecycle {
+    prevent_destroy = false  # Adjust as needed, but force_destroy is already set to true
+  }
 }
 
 variable "prefix" {
-  type = string
+  description = "Prefix for bucket name"
+  type        = string
 }
 
 variable "project" {
-  type = string
+  description = "GCP Project ID"
+  type        = string
 }
 
 variable "region" {
-  type = string
+  description = "GCP Region for the bucket"
+  type        = string
 }
