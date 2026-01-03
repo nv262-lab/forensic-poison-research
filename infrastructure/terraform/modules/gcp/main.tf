@@ -3,6 +3,14 @@ resource "google_storage_bucket" "bucket" {
   project       = var.project
   location      = var.region
   force_destroy = true
+
+  uniform_bucket_level_access {
+    enabled = true
+  }
+
+  versioning {
+    enabled = true
+  }
 }
 
 variable "prefix" {
