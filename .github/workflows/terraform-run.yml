@@ -6,12 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
   ci-terraform:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
 
     env:
       TF_WORKING_DIR: infrastructure/terraform
@@ -23,6 +24,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Debug - list repo
         run: |
@@ -63,6 +66,7 @@ jobs:
           GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
           GCP_REGION: ${{ env.GCP_REGION }}
           GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET || '' }}
+          GCP_LOG_SINK_NAME: ${{ secrets.GCP_LOG_SINK_NAME || '' }}
           GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: .github/scripts/setup_cloud_logs.sh || true
 
@@ -122,19 +126,11 @@ jobs:
             terraform init -input=false
           fi
 
-      - name: Terraform fmt (auto-fix and push)
+      - name: Terraform fmt & validate
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          terraform fmt -recursive
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          if ! git diff --quiet; then
-            git add -A
-            git commit -m "chore: terraform fmt"
-            git push
-          else
-            echo "No formatting changes."
-          fi
+          terraform fmt -check -recursive
+          terraform validate
 
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
