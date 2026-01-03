@@ -24,19 +24,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Write GCP service account key (absolute path)
+      - name: Write GCP service account key
         run: |
           TF_KEY_PATH="${GITHUB_WORKSPACE}/gcp-key.json"
           payload="${{ secrets.GCP_SA_KEY }}"
-          # try base64 decode if looks like base64
-          if printf '%s' "$payload" | grep -Eq '^[A-Za-z0-9+/=\n\r]+$' && [ ${#payload} -gt 100 ]; then
+          # Try base64 decode if it looks like base64
+          if printf '%s' "$payload" | grep -Eq '^[A-Za-z0-9+/=]+$' && [ ${#payload} -gt 100 ]; then
             payload=$(printf '%s' "$payload" | tr -d '\r\n' | base64 --decode 2>/dev/null || printf '%s' "$payload")
           fi
-          # strip surrounding quotes
+          # Strip surrounding quotes
           payload=$(printf '%s' "$payload" | sed -E 's/^"(.*)"$/\1/' | sed 's/\\"/"/g')
           printf '%s' "$payload" > "$TF_KEY_PATH"
           chmod 600 "$TF_KEY_PATH"
-          jq -e . "$TF_KEY_PATH" >/dev/null || (echo "GCP key is not valid JSON"; exit 1)
+          if ! jq -e . "$TF_KEY_PATH" >/dev/null; then
+            echo "GCP key is not valid JSON"
+            exit 1
+          fi
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -46,7 +49,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup gcloud (optional)
+      - name: Setup gcloud
         uses: google-github-actions/setup-gcloud@v1
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -61,7 +64,7 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_KEY_PATH }}
+          GOOGLE_APPLICATION_CREDENTIALS: "${GITHUB_WORKSPACE}/gcp-key.json"
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
@@ -79,7 +82,7 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_KEY_PATH }}
+          GOOGLE_APPLICATION_CREDENTIALS: "${GITHUB_WORKSPACE}/gcp-key.json"
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
@@ -90,5 +93,5 @@ jobs:
         if: github.ref == 'refs/heads/main' && success()
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_KEY_PATH }}
+          GOOGLE_APPLICATION_CREDENTIALS: "${GITHUB_WORKSPACE}/gcp-key.json"
         run: terraform apply -input=false -auto-approve tfplan
