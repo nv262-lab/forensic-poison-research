@@ -1,5 +1,5 @@
 resource "azurerm_resource_group" "rg" {
-  name     = "${var.prefix}-rg"
+  name     = "${var.azprefix}-rg"
   location = var.location
   tags = {
     sandbox = "true"
