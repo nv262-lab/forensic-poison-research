@@ -24,9 +24,6 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Debug GCP Service Account Key
-        run: echo "GCP Service Account Key Length: ${#secrets.GCP_SA_KEY}"
-
       - name: Write GCP service account key
         run: |
           TF_KEY_PATH="${GITHUB_WORKSPACE}/gcp-key.json"
