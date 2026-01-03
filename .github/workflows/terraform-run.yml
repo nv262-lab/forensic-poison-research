@@ -27,14 +27,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Debug - list repo
+      - name: Write GCP Service Account Key to Terraform working dir
         run: |
-          pwd
-          ls -la
-          ls -la ${{ env.TF_WORKING_DIR }} || true
-
-      - name: Make script executable
-        run: chmod +x .github/scripts/setup_cloud_logs.sh || true
+          mkdir -p "${{ env.TF_WORKING_DIR }}"
+          printf '%s' "${{ secrets.GCP_SA_KEY }}" > "${{ env.TF_WORKING_DIR }}/gcp-key.json"
+          chmod 600 "${{ env.TF_WORKING_DIR }}/gcp-key.json"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -51,62 +48,6 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT }}
           export_default_credentials: true
 
-      - name: Write GCP Service Account Key to File
-        run: echo "${{ secrets.GCP_SA_KEY }}" > gcp-key.json
-
-      - name: Install CLI tools
-        run: |
-          python -m pip install --upgrade pip
-          pip install awscli
-          gcloud --quiet components update
-
-      - name: Configure cloud log buckets (project-relative names)
-        env:
-          CI_REPO: ${{ env.CI_REPO }}
-          CI_RUN_ID: ${{ env.CI_RUN_ID }}
-          AWS_DEFAULT_REGION: ${{ env.AWS_REGION }}
-          AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET }}
-          GCP_PROJECT: ${{ secrets.GCP_PROJECT }}
-          GCP_REGION: ${{ env.GCP_REGION }}
-          GCP_LOG_BUCKET: ${{ secrets.GCP_LOG_BUCKET }}
-          GCP_LOG_SINK_NAME: ${{ secrets.GCP_LOG_SINK_NAME }}
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
-        run: .github/scripts/setup_cloud_logs.sh || true
-
-      - name: Validate AWS identity
-        run: aws sts get-caller-identity || true
-
-      - name: Ensure Terraform backend (S3 + DynamoDB) exists
-        env:
-          TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
-          TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
-          TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
-          AWS_REGION: ${{ env.AWS_REGION }}
-        run: |
-          set -euo pipefail
-          if [ -z "${TF_STATE_BUCKET:-}" ]; then
-            echo "TF_STATE_BUCKET is not set; skipping backend provisioning"
-            exit 0
-          fi
-          if ! aws s3api head-bucket --bucket "${TF_STATE_BUCKET}" 2>/dev/null; then
-            if [ "${AWS_REGION}" = "us-east-1" ]; then
-              aws s3api create-bucket --bucket "${TF_STATE_BUCKET}"
-            else
-              aws s3api create-bucket --bucket "${TF_STATE_BUCKET}" --create-bucket-configuration LocationConstraint="${AWS_REGION}"
-            fi
-          fi
-          aws s3api put-bucket-versioning --bucket "${TF_STATE_BUCKET}" --versioning-configuration Status=Enabled || true
-          if [ -n "${TF_LOCK_TABLE:-}" ]; then
-            if ! aws dynamodb describe-table --table-name "${TF_LOCK_TABLE}" 2>/dev/null; then
-              aws dynamodb create-table \
-                --table-name "${TF_LOCK_TABLE}" \
-                --attribute-definitions AttributeName=LockID,AttributeType=S \
-                --key-schema AttributeName=LockID,KeyType=HASH \
-                --provisioned-throughput ReadCapacityUnits=5,WriteCapacityUnits=5
-              aws dynamodb wait table_exists --table-name "${TF_LOCK_TABLE}"
-            fi
-          fi
-
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -120,6 +61,8 @@ jobs:
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
           TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX }}
           AWS_REGION: ${{ env.AWS_REGION }}
+          TF_VAR_gcp_service_account_key: ${{ env.TF_WORKING_DIR }}/gcp-key.json
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
         run: |
           if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
             terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="key=${TF_STATE_KEY}" -backend-config="region=${AWS_REGION}" -backend-config="dynamodb_table=${TF_LOCK_TABLE}" -input=false
@@ -132,7 +75,8 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          TF_VAR_gcp_service_account_key: gcp-key.json  # Use the path to the key file
+          TF_VAR_gcp_service_account_key: ${{ env.TF_WORKING_DIR }}/gcp-key.json
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
@@ -142,4 +86,6 @@ jobs:
       - name: Terraform apply (auto-approve on main)
         if: github.ref == 'refs/heads/main' && success()
         working-directory: ${{ env.TF_WORKING_DIR }}
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
         run: terraform apply -input=false -auto-approve tfplan
