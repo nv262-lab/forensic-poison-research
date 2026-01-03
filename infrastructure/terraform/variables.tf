@@ -35,11 +35,6 @@ variable "gcp_project" {
   default = "indigo-splice-483118-h7"
 }
 
-variable "gcp_service_account_key" {
-  description = "The path to the service account key file"
-  type        = string
-}
-
 variable "gcp_region" {
   type    = string
   default = "us-central1"
