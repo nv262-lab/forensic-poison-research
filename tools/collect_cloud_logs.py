@@ -12,7 +12,7 @@ GCP auth:
 - Optionally provide GCP project via --gcp-project or env GCP_PROJECT.
 """
 
-from _future_ import annotations
+from __future__ import annotations
 import argparse
 import os
 import sys
