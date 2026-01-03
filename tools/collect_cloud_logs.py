@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
 """
-Collect cloud logs from AWS S3, GCP GCS, or Azure Blob Storage (non-interactive, no gcloud).
+Collect cloud logs from AWS S3, GCP GCS, and Azure Blob Storage (non-interactive).
+Designed for CI (e.g., GitHub Actions). No interactive gcloud/auth flows are used.
 
-Important:
-- GCP: uses ONLY an OAuth2 access token (env GCP_ACCESS_TOKEN or --gcp-access-token).
-  This script will NOT call gcloud or attempt interactive OAuth flows.
-- AWS: reads credentials from environment or instance profile (no interactive prompts).
-- Azure: uses AZURE_STORAGE_CONNECTION_STRING.
+Auth sources (non-interactive):
+- GCP: must provide an OAuth2 access token via env GCP_ACCESS_TOKEN or --gcp-access-token.
+- AWS: standard env vars (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN) or instance role.
+- Azure: AZURE_STORAGE_CONNECTION_STRING.
 
-Outputs downloads into --out and writes summary to data/logs/summary.json.
+Outputs:
+- Downloads placed under --out/<provider>/
+- Summary written to data/logs/summary.json
+
+Dependencies:
+- boto3, botocore (AWS)
+- requests (GCP)
+- azure-storage-blob (Azure)
 """
 from __future__ import annotations
 import argparse
@@ -18,18 +25,23 @@ import os
 import pathlib
 import sys
 import time
+import traceback
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-log = logging.getLogger("collect_cloud_logs_no_interactive")
+log = logging.getLogger("collect_cloud_logs_ci")
+
+RETRY_TRIES = 3
+RETRY_DELAY = 1
+RETRY_BACKOFF = 2
 
 
 def ensure_dir(p: str | Path):
     pathlib.Path(p).mkdir(parents=True, exist_ok=True)
 
 
-def retry(fn, tries=3, delay=1, backoff=2, name="operation"):
+def retry(fn, tries=RETRY_TRIES, delay=RETRY_DELAY, backoff=RETRY_BACKOFF, name="operation"):
     last_exc = None
     for i in range(tries):
         try:
@@ -42,20 +54,50 @@ def retry(fn, tries=3, delay=1, backoff=2, name="operation"):
     raise last_exc
 
 
+# ---------------- Summary ----------------
+def write_summary(root: Path, out_file: Path):
+    summary: Dict[str, Any] = {"total_files": 0, "providers": {}, "errors": []}
+    if not root.exists():
+        ensure_dir(root)
+    for provider_dir in sorted(root.iterdir()):
+        if not provider_dir.is_dir():
+            continue
+        p_summary = {"files": 0, "errors": []}
+        for p in provider_dir.rglob("*"):
+            if p.is_file():
+                p_summary["files"] += 1
+                try:
+                    txt = p.read_text(errors="ignore")
+                    if "AccessDenied" in txt or "access denied" in txt.lower():
+                        p_summary["errors"].append(str(p))
+                except Exception:
+                    pass
+        summary["providers"][provider_dir.name] = p_summary
+        summary["total_files"] += p_summary["files"]
+    ensure_dir(out_file.parent)
+    out_file.write_text(json.dumps(summary, indent=2))
+    log.info("Wrote summary to %s", out_file)
+
+
 # ---------------- AWS ----------------
 def discover_or_create_aws_bucket(preferred: Optional[str] = None) -> Optional[str]:
     try:
         import boto3
         from botocore.exceptions import ClientError
+    except Exception:
+        log.debug("boto3 not installed; skipping AWS discovery")
+        return preferred
 
-        if preferred:
-            return preferred
-        for name in ("AWS_LOG_BUCKET", "TF_VAR_tf_state_bucket", "AWS_LOG_BUCKET_DEFAULT"):
-            v = os.environ.get(name)
-            if v:
-                log.info("Using AWS bucket from env %s=%s", name, v)
-                return v
+    if preferred:
+        return preferred
 
+    for name in ("AWS_LOG_BUCKET", "TF_VAR_tf_state_bucket", "AWS_LOG_BUCKET_DEFAULT"):
+        v = os.environ.get(name)
+        if v:
+            log.info("Using AWS bucket from env %s=%s", name, v)
+            return v
+
+    try:
         s3 = boto3.client("s3")
         resp = s3.list_buckets()
         prefix = os.environ.get("AWS_LOG_BUCKET_DEFAULT", "rag-forensic-logs")
@@ -64,21 +106,22 @@ def discover_or_create_aws_bucket(preferred: Optional[str] = None) -> Optional[s
             if nm.startswith(prefix):
                 log.info("Discovered AWS bucket by listing: %s", nm)
                 return nm
-
-        default = os.environ.get("AWS_LOG_BUCKET_DEFAULT")
-        if default and os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
-            region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
-            try:
-                kwargs = {"Bucket": default}
-                if region != "us-east-1":
-                    kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
-                s3.create_bucket(**kwargs)
-                log.info("Created S3 bucket %s in %s (best-effort)", default, region)
-                return default
-            except ClientError as ce:
-                log.warning("Failed to create default S3 bucket %s: %s", default, ce)
     except Exception as e:
-        log.debug("AWS discovery/create failed: %s", e)
+        log.debug("S3 list_buckets failed: %s", e)
+
+    default = os.environ.get("AWS_LOG_BUCKET_DEFAULT")
+    if default and os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        try:
+            s3 = boto3.client("s3", region_name=os.environ.get("AWS_DEFAULT_REGION", None))
+            region = os.environ.get("AWS_DEFAULT_REGION", "us-east-1")
+            kwargs = {"Bucket": default}
+            if region != "us-east-1":
+                kwargs["CreateBucketConfiguration"] = {"LocationConstraint": region}
+            s3.create_bucket(**kwargs)
+            log.info("Created S3 bucket %s in %s (best-effort)", default, region)
+            return default
+        except Exception as ce:
+            log.warning("Failed to create default S3 bucket %s: %s", default, ce)
     return None
 
 
@@ -86,9 +129,8 @@ def _attempt_fix_aws_bucket_policy(bucket: str) -> bool:
     try:
         import boto3
         from botocore.exceptions import ClientError
-
-        s3 = boto3.client("s3")
         sts = boto3.client("sts")
+        s3 = boto3.client("s3")
         caller = sts.get_caller_identity()
         acct = caller.get("Account")
         if not acct:
@@ -98,7 +140,6 @@ def _attempt_fix_aws_bucket_policy(bucket: str) -> bool:
         env_member = os.environ.get("AWS_GRANT_MEMBER")
         if env_member:
             members.append(env_member)
-
         policy = {
             "Version": "2012-10-17",
             "Statement": [
@@ -118,7 +159,6 @@ def _attempt_fix_aws_bucket_policy(bucket: str) -> bool:
                 },
             ],
         }
-
         try:
             existing = s3.get_bucket_policy(Bucket=bucket)
             existing_policy = json.loads(existing["Policy"])
@@ -129,10 +169,8 @@ def _attempt_fix_aws_bucket_policy(bucket: str) -> bool:
             new_policy = existing_policy
         except ClientError:
             new_policy = policy
-
         s3.put_bucket_policy(Bucket=bucket, Policy=json.dumps(new_policy))
         log.info("Applied bucket policy to %s (best-effort)", bucket)
-
         canonical = os.environ.get("AWS_GRANT_CANONICAL_ID")
         if canonical:
             try:
@@ -151,26 +189,24 @@ def _attempt_fix_aws_bucket_policy(bucket: str) -> bool:
 
 
 def collect_aws(bucket: str, prefix: str, out_dir: str):
-    import boto3
-    from botocore.exceptions import ClientError
-
+    try:
+        import boto3
+    except Exception:
+        raise RuntimeError("boto3 is required for AWS collection but is not installed")
     s3 = boto3.client("s3")
     ensure_dir(out_dir)
-
     try:
         s3.head_bucket(Bucket=bucket)
-    except ClientError as e:
-        log.warning("head_bucket failed for %s: %s", bucket, getattr(e, "response", {}))
+    except Exception as e:
+        log.warning("head_bucket failed for %s: %s", bucket, getattr(e, "response", e))
         if os.environ.get("AWS_GRANT_MEMBER") or os.environ.get("AWS_GRANT_CANONICAL_ID"):
             ok = _attempt_fix_aws_bucket_policy(bucket)
             if ok:
                 try:
                     s3.head_bucket(Bucket=bucket)
                 except Exception:
-                    log.error("Still cannot access bucket after attempting policy changes.")
-                    raise
-        else:
-            raise
+                    raise RuntimeError("Still cannot access AWS bucket after attempting policy fix")
+        raise RuntimeError(f"Cannot access AWS bucket {bucket}: {e}")
 
     paginator = s3.get_paginator("list_objects_v2")
     kwargs = {"Bucket": bucket, "Prefix": prefix or "", "PaginationConfig": {"PageSize": 1000}}
@@ -184,22 +220,26 @@ def collect_aws(bucket: str, prefix: str, out_dir: str):
                 def dl():
                     s3.download_file(bucket, key, target)
                 try:
-                    retry(dl, tries=3, delay=1, backoff=2, name=f"s3-download {key}")
+                    retry(dl, name=f"s3-download {key}")
                     downloaded += 1
                     log.info("Downloaded s3://%s/%s -> %s", bucket, key, target)
                 except Exception as e:
                     log.error("Failed to download s3://%s/%s: %s", bucket, key, e)
-    except ClientError as e:
-        log.error("S3 listing failed: %s", e)
-        raise
+    except Exception as e:
+        raise RuntimeError(f"S3 listing/downloading failed: {e}")
     log.info("AWS: total downloaded %d files", downloaded)
 
 
-# ---------------- GCP (REST-only, token required) ----------------
-import requests  # used for REST calls
+# ---------------- GCP (REST-only) ----------------
+try:
+    import requests
+except Exception:
+    requests = None
 
 
-def _gcp_list_objects_rest(bucket: str, prefix: str, token: str) -> requests.Response:
+def _gcp_list_objects_rest(bucket: str, prefix: str, token: str):
+    if not requests:
+        raise RuntimeError("requests library is required for GCP REST calls")
     from urllib.parse import quote_plus
     url = f"https://storage.googleapis.com/storage/v1/b/{quote_plus(bucket)}/o"
     headers = {"Authorization": f"Bearer {token}"}
@@ -208,6 +248,8 @@ def _gcp_list_objects_rest(bucket: str, prefix: str, token: str) -> requests.Res
 
 
 def _gcp_download_object_rest(bucket: str, name: str, token: str, out_path: str) -> bool:
+    if not requests:
+        raise RuntimeError("requests library is required for GCP REST calls")
     qname = requests.utils.quote(name, safe="")
     dl_url = f"https://storage.googleapis.com/storage/v1/b/{bucket}/o/{qname}?alt=media"
     r = requests.get(dl_url, headers={"Authorization": f"Bearer {token}"}, stream=True, timeout=120)
@@ -222,7 +264,9 @@ def _gcp_download_object_rest(bucket: str, name: str, token: str, out_path: str)
     return False
 
 
-def _gcp_get_iam_policy_rest(bucket: str, token: str) -> Optional[Dict[str, Any]]:
+def _gcp_get_iam_policy_rest(bucket: str, token: str):
+    if not requests:
+        raise RuntimeError("requests library is required for GCP REST calls")
     from urllib.parse import quote_plus
     url = f"https://storage.googleapis.com/storage/v1/b/{quote_plus(bucket)}/iam"
     r = requests.get(url, headers={"Authorization": f"Bearer {token}"}, timeout=30)
@@ -233,6 +277,8 @@ def _gcp_get_iam_policy_rest(bucket: str, token: str) -> Optional[Dict[str, Any]
 
 
 def _gcp_set_iam_policy_rest(bucket: str, policy: Dict[str, Any], token: str) -> bool:
+    if not requests:
+        raise RuntimeError("requests library is required for GCP REST calls")
     from urllib.parse import quote_plus
     url = f"https://storage.googleapis.com/storage/v1/b/{quote_plus(bucket)}/iam"
     r = requests.put(url, headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, json=policy, timeout=30)
@@ -261,9 +307,11 @@ def _gcp_add_binding_rest(bucket: str, member: str, role: str, token: str) -> bo
 
 
 def collect_gcp(bucket: str, prefix: str, out_dir: str, token: str):
+    if not requests:
+        raise RuntimeError("requests library is required for GCP REST calls")
     ensure_dir(out_dir)
     if not token:
-        raise RuntimeError("GCP_ACCESS_TOKEN is required for GCP provider (non-interactive).")
+        raise RuntimeError("GCP access token required in non-interactive CI mode")
 
     r = _gcp_list_objects_rest(bucket, prefix, token)
     if r.status_code == 200:
@@ -287,37 +335,20 @@ def collect_gcp(bucket: str, prefix: str, out_dir: str, token: str):
         return
 
     if r.status_code == 401:
-        log.warning("GCP REST returned 401 Unauthorized for provided token.")
-        member = os.environ.get("GCP_GRANT_MEMBER")
-        if member:
-            if _gcp_add_binding_rest(bucket, member, "roles/storage.objectViewer", token):
-                log.info("Added viewer binding via REST; retrying listing")
-                r2 = _gcp_list_objects_rest(bucket, prefix, token)
-                if r2.status_code == 200:
-                    items = r2.json().get("items", [])
-                    downloaded = 0
-                    for it in items:
-                        name = it.get("name")
-                        if not name:
-                            continue
-                        target = os.path.join(out_dir, name)
-                        try:
-                            ok = _gcp_download_object_rest(bucket, name, token, target)
-                            if ok:
-                                downloaded += 1
-                        except Exception as e:
-                            log.error("Download error for %s: %s", name, e)
-                    log.info("GCP: downloaded %d objects after IAM change", downloaded)
-                    return
-            log.error("Token is unauthorized and attempt to add IAM binding failed or token lacks permission to set IAM.")
-        raise RuntimeError("GCP listing failed and token unauthorized (401).")
+        log.error("GCP REST returned 401 Unauthorized for provided token. Ensure GCP_ACCESS_TOKEN is valid and has storage.objectViewer permissions.")
+        raise RuntimeError("GCP token unauthorized (401)")
+
     log.error("GCP REST returned %s: %s", r.status_code, r.text)
     raise RuntimeError(f"GCP listing failed with status {r.status_code}")
 
 
 # ---------------- Azure ----------------
 def collect_azure(container: str, prefix: str, out_dir: str):
-    from azure.storage.blob import ContainerClient
+    try:
+        from azure.storage.blob import ContainerClient
+    except Exception:
+        raise RuntimeError("azure-storage-blob is required for Azure collection but is not installed")
+
     ensure_dir(out_dir)
     conn = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if not conn:
@@ -337,7 +368,7 @@ def collect_azure(container: str, prefix: str, out_dir: str):
                 with open(target, "wb") as fh:
                     fh.write(data)
             try:
-                retry(dl, tries=3, delay=1, backoff=2, name=f"azure-download {key}")
+                retry(dl, name=f"azure-download {key}")
                 downloaded += 1
                 log.info("Downloaded azure://%s/%s -> %s", container, key, target)
             except Exception as e:
@@ -357,70 +388,81 @@ def collect_azure(container: str, prefix: str, out_dir: str):
         raise
 
 
-# ---------------- summary ----------------
-def parse_logs_and_summarize(root: Path, out_file: Path):
-    summary: Dict[str, Any] = {"total_files": 0, "total_events": 0, "errors": []}
-    for p in root.rglob("*"):
-        if not p.is_file():
-            continue
-        summary["total_files"] += 1
-        try:
-            text = p.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        if "AccessDenied" in text or "access denied" in text.lower():
-            summary["errors"].append(str(p))
-        summary["total_events"] += max(0, len([l for l in text.splitlines() if l.strip()]))
-    ensure_dir(out_file.parent)
-    out_file.write_text(json.dumps(summary, indent=2))
-    log.info("Wrote summary to %s", out_file)
-    return summary
-
-
-# ---------------- main ----------------
+# ---------------- CLI / main ----------------
 def main():
-    p = argparse.ArgumentParser(description="Collect cloud logs (non-interactive, GCP uses only access token)")
-    p.add_argument("--provider", choices=["aws", "gcp", "azure"], required=True)
+    p = argparse.ArgumentParser(description="Collect cloud logs (CI non-interactive)")
+    p.add_argument("--providers", nargs="+", choices=["aws", "gcp", "azure"], default=["aws", "gcp", "azure"], help="Providers to collect from")
     p.add_argument("--bucket", help="S3 or GCS bucket name")
     p.add_argument("--container", help="Azure container name")
     p.add_argument("--prefix", default="", help="Prefix to filter")
-    p.add_argument("--out", required=True, help="Local output directory")
+    p.add_argument("--out", required=True, help="Local output directory (root for provider subdirs)")
     p.add_argument("--gcp-access-token", help="GCP access token (overrides env GCP_ACCESS_TOKEN)")
     args = p.parse_args()
 
-    out_dir = Path(args.out)
-    ensure_dir(out_dir)
+    out_root = Path(args.out)
+    ensure_dir(out_root)
+
+    errors = []
+
+    for provider in args.providers:
+        try:
+            if provider == "aws":
+                aws_out = out_root / "aws"
+                ensure_dir(aws_out)
+                bucket = args.bucket or os.environ.get("AWS_LOG_BUCKET") or os.environ.get("AWS_LOG_BUCKET_DEFAULT")
+                if not bucket:
+                    bucket = discover_or_create_aws_bucket()
+                if not bucket:
+                    msg = "No AWS log bucket configured/discoverable. Set AWS_LOG_BUCKET or AWS_LOG_BUCKET_DEFAULT and ensure AWS credentials are present."
+                    log.warning(msg)
+                    errors.append({"provider": "aws", "error": msg})
+                else:
+                    log.info("Collecting AWS from bucket %s", bucket)
+                    collect_aws(bucket, args.prefix, str(aws_out))
+            elif provider == "gcp":
+                gcp_out = out_root / "gcp"
+                ensure_dir(gcp_out)
+                bucket = args.bucket or os.environ.get("GCP_LOG_BUCKET") or os.environ.get("GCP_LOG_BUCKET_DEFAULT")
+                if not bucket:
+                    msg = "No GCP log bucket specified. Set --bucket or GCP_LOG_BUCKET/GCP_LOG_BUCKET_DEFAULT"
+                    log.warning(msg)
+                    errors.append({"provider": "gcp", "error": msg})
+                else:
+                    token = args.gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN")
+                    if not token:
+                        msg = "GCP_ACCESS_TOKEN not provided. Set env GCP_ACCESS_TOKEN or pass --gcp-access-token"
+                        log.warning(msg)
+                        errors.append({"provider": "gcp", "error": msg})
+                    else:
+                        log.info("Collecting GCP from bucket %s", bucket)
+                        collect_gcp(bucket, args.prefix, str(gcp_out), token)
+            elif provider == "azure":
+                az_out = out_root / "azure"
+                ensure_dir(az_out)
+                container = args.container or os.environ.get("AZURE_LOG_CONTAINER")
+                if not container:
+                    msg = "No Azure container specified. Set --container or AZURE_LOG_CONTAINER"
+                    log.warning(msg)
+                    errors.append({"provider": "azure", "error": msg})
+                else:
+                    log.info("Collecting Azure from container %s", container)
+                    collect_azure(container, args.prefix, str(az_out))
+        except Exception as e:
+            tb = traceback.format_exc()
+            log.error("Provider %s failed: %s\n%s", provider, e, tb)
+            errors.append({"provider": provider, "error": str(e)})
+            # continue to next provider
 
     try:
-        if args.provider == "aws":
-            bucket = args.bucket or discover_or_create_aws_bucket()
-            if not bucket:
-                p.error("AWS bucket not specified and none discovered/creatable")
-            collect_aws(bucket, args.prefix, str(out_dir))
-        elif args.provider == "gcp":
-            bucket = args.bucket or os.environ.get("GCP_LOG_BUCKET") or os.environ.get("GCP_LOG_BUCKET_DEFAULT")
-            if not bucket:
-                p.error("GCP bucket not specified and none provided in env")
-            token = args.gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN")
-            if not token:
-                p.error("GCP_ACCESS_TOKEN must be set in env or passed via --gcp-access-token (non-interactive mode)")
-            collect_gcp(bucket, args.prefix, str(out_dir), token)
-        elif args.provider == "azure":
-            container = args.container or os.environ.get("AZURE_LOG_CONTAINER")
-            if not container:
-                p.error("Azure container not specified and AZURE_LOG_CONTAINER not set")
-            collect_azure(container, args.prefix, str(out_dir))
-    except SystemExit:
-        raise
+        write_summary(out_root, Path("data/logs/summary.json"))
     except Exception as e:
-        log.error("Failed to collect logs: %s", e)
-        log.debug(traceback.format_exc())
+        log.warning("Failed to write summary: %s", e)
+
+    if errors:
+        log.info("Completed with errors: %s", errors)
         sys.exit(2)
 
-    try:
-        parse_logs_and_summarize(out_dir, Path("data/logs/summary.json"))
-    except Exception as e:
-        log.warning("Failed to parse logs and write summary: %s", e)
+    log.info("Completed successfully for all requested providers.")
 
 
 if __name__ == "__main__":
