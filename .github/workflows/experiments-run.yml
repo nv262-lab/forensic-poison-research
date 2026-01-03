@@ -226,7 +226,7 @@ jobs:
           CONN=$(az storage account show-connection-string -n "$STORAGE_NAME" -g "$RG" --query connectionString -o tsv)
           echo "AZURE_STORAGE_CONNECTION_STRING=$CONN" >> $GITHUB_ENV
           az storage container create --name "$CONTAINER" --connection-string "$CONN" || true
-          az storage blob service-properties update --enable-versioning true --account-name "$STORAGE_NAME" || true
+          az storage blob service-properties update --account-name "$STORAGE_NAME" || true
           echo "AZURE_LOG_CONTAINER=$CONTAINER" >> $GITHUB_ENV
           echo "AZURE_LOG_STORAGE=$STORAGE_NAME" >> $GITHUB_ENV
           echo "AZURE_LOG_RG=$RG" >> $GITHUB_ENV
