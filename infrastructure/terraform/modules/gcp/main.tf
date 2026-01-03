@@ -4,13 +4,9 @@ resource "google_storage_bucket" "bucket" {
   location      = var.region
   force_destroy = true
 
-  uniform_bucket_level_access {
-    enabled = true
-  }
+  uniform_bucket_level_access = true
 
-  versioning {
-    enabled = true
-  }
+  versioning = true
 
   # Optional: Set lifecycle rules if needed
   lifecycle {
