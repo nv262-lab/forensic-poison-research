@@ -9,12 +9,6 @@ terraform {
   }
 }
 
-variable "aws_region" { type = string, default = "us-east-1" }
-variable "gcp_project" { type = string, default = "" }
-variable "gcp_region"  { type = string, default = "us-central1" }
-variable "azure_subscription_id" { type = string, default = "" }
-variable "azure_tenant_id"       { type = string, default = "" }
-
 provider "aws" {
   region = var.aws_region
 }
