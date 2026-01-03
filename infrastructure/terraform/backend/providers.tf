@@ -1,4 +1,4 @@
-[9:48 PM, 1/2/2026] Suji: terraform {
+terraform {
   required_version = ">= 1.3.0"
 
   required_providers {
