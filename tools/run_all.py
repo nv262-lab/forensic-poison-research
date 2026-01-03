@@ -166,7 +166,7 @@ def run_all(output: str | Path = DEFAULT_OUTPUT) -> List[Dict[str, Any]]:
     return deduped
 
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     import argparse
 
     p = argparse.ArgumentParser(description="Run simple detectors over collected logs")
