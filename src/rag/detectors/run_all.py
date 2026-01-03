@@ -57,7 +57,7 @@ def basic_extract_fields(log_obj: Dict[str, Any], raw: str) -> Dict[str, Any]:
         if k in log_obj:
             fields["severity"] = log_obj[k]
             break
-    for k in ("protoPayload", "message", "msg", "message_text"):
+    for k in ("protoPayload", "message", "msg", "message_text", "text"):
         if k in log_obj:
             fields["message"] = log_obj.get(k)
             break
@@ -67,7 +67,7 @@ def basic_extract_fields(log_obj: Dict[str, Any], raw: str) -> Dict[str, Any]:
     return fields
 
 
-# Simple rule set -- extend as needed
+# Rule set extended to cover the listed experiment scenarios.
 RULES = [
     {
         "id": "suspicious_auth_failure",
@@ -99,6 +99,67 @@ RULES = [
         "pattern": re.compile(r"(GetObject|storage.objects.get|Download|read).*", re.I),
         "severity": "critical",
     },
+    # Experiment-specific patterns (approximate/heuristic)
+    {
+        "id": "label_inversion",
+        "description": "Possible label inversion poisoning indicators (unexpected labels/annotations)",
+        "pattern": re.compile(r"label inversion|mislabeled|label.*changed|class.*flipped", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "context_fragment_injection",
+        "description": "Context fragment injection evidence (injected contextual snippets)",
+        "pattern": re.compile(r"context fragment|injected snippet|injection.*context|malicious fragment", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "embedding_attractor",
+        "description": "Embedding attractor behavior (repeated similar vectors/tokens)",
+        "pattern": re.compile(r"embedding attractor|similar vectors|repeated embeddings|vector cluster", re.I),
+        "severity": "medium",
+    },
+    {
+        "id": "provenance_spoofing",
+        "description": "Provenance spoofing indicators (forged metadata/source)",
+        "pattern": re.compile(r"provenance spoof|forged source|fake author|source spoof", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "shadow_token_injection",
+        "description": "Shadow token injection (unexpected tokens or credential material in logs)",
+        "pattern": re.compile(r"shadow token|injected token|secret leak|api key leaked", re.I),
+        "severity": "critical",
+    },
+    {
+        "id": "popularity_pumping",
+        "description": "Popularity pumping signs (unnatural traffic spikes or upvote manipulation)",
+        "pattern": re.compile(r"popularity pump|vote spike|unnatural traffic|upvote.*spike", re.I),
+        "severity": "medium",
+    },
+    {
+        "id": "stale_signature_replay",
+        "description": "Stale signature replay (replayed signed artifacts/old signatures used)",
+        "pattern": re.compile(r"replay attack|stale signature|signature replay|old signature", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "invisible_unicode_backdoor",
+        "description": "Invisible unicode/backdoor patterns (zero-width/invisible chars in text)",
+        "pattern": re.compile(r"zero-?width|zero_width|invisible unicode|\u200b|\u200c|\u200d", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "delayed_activation_poison",
+        "description": "Delayed activation poisoning (time-gated payloads or delayed triggers)",
+        "pattern": re.compile(r"delayed activation|time-gated|time trigger|activate after|sleep.*payload", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "cross_source_inconsistency",
+        "description": "Cross-source inconsistency (mismatched metadata across sources)",
+        "pattern": re.compile(r"cross[-_ ]source inconsistency|mismatch.*source|inconsistent provenance", re.I),
+        "severity": "medium",
+    },
 ]
 
 
@@ -108,26 +169,29 @@ def detect_log_entry(raw: str, source_path: Path) -> List[Dict[str, Any]]:
     base = {"source": str(source_path)}
     if parsed:
         fields = basic_extract_fields(parsed, raw)
-        msg = fields.get("message", "")
+        msg = fields.get("message", "") or json.dumps(parsed)
     else:
         fields = {"message": raw}
         msg = raw
 
     # Apply rules
     for r in RULES:
-        if r["pattern"].search(msg):
-            ev = {
-                "id": r["id"],
-                "description": r["description"],
-                "severity": r["severity"],
-                "message": fields.get("message"),
-                "timestamp": fields.get("timestamp"),
-                "source_file": str(source_path),
-            }
-            # include raw JSON if parsed
-            if parsed:
-                ev["raw"] = parsed
-            events.append(ev)
+        try:
+            if r["pattern"].search(msg):
+                ev = {
+                    "id": r["id"],
+                    "description": r["description"],
+                    "severity": r["severity"],
+                    "message": fields.get("message"),
+                    "timestamp": fields.get("timestamp"),
+                    "source_file": str(source_path),
+                }
+                # include raw JSON if parsed
+                if parsed:
+                    ev["raw"] = parsed
+                events.append(ev)
+        except Exception:
+            continue
 
     return events
 
