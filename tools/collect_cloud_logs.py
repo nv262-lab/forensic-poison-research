@@ -1,28 +1,14 @@
-python
 #!/usr/bin/env python3
 """
-Collect cloud logs from AWS S3, GCP GCS, or Azure Blob Storage (non-interactive).
+Collect cloud logs from AWS S3, GCP GCS, or Azure Blob Storage (non-interactive, no gcloud).
 
-Important: For GCP this script uses ONLY an OAuth2 access token (env GCP_ACCESS_TOKEN
-or --gcp-access-token). It will NOT use ADC/service account JSON or gcloud. If the token
-is unauthorized (401) the script can attempt REST IAM changes only if the token has
-storage.buckets.get and storage.buckets.setIamPolicy permissions and you set GCP_GRANT_MEMBER.
+Important:
+- GCP: uses ONLY an OAuth2 access token (env GCP_ACCESS_TOKEN or --gcp-access-token).
+  This script will NOT call gcloud or attempt interactive OAuth flows.
+- AWS: reads credentials from environment or instance profile (no interactive prompts).
+- Azure: uses AZURE_STORAGE_CONNECTION_STRING.
 
-Environment:
-- GCP:
-  * Set GCP_ACCESS_TOKEN (short-lived access token) OR pass --gcp-access-token.
-  * Optionally set GCP_GRANT_MEMBER (e.g. serviceAccount:... ) to instruct the script
-    which member to grant roles if the token allows it.
-  * Set GCP_LOG_BUCKET or pass --bucket.
-- AWS:
-  * Use AWS env credentials or instance role. Optionally AWS_LOG_BUCKET / AWS_LOG_BUCKET_DEFAULT.
-  * Optional policy change envs: AWS_GRANT_MEMBER, AWS_GRANT_CANONICAL_ID.
-- Azure:
-  * AZURE_STORAGE_CONNECTION_STRING required for Azure downloads.
-  * Optional AZURE_MAKE_PUBLIC=true to let the script set container public (non-interactive).
-
-Writes downloads into the folder provided with --out and summary to data/logs/summary.json.
-No interactive login will be attempted.
+Outputs downloads into --out and writes summary to data/logs/summary.json.
 """
 from __future__ import annotations
 import argparse
@@ -32,12 +18,11 @@ import os
 import pathlib
 import sys
 import time
-import traceback
 from pathlib import Path
 from typing import Optional, Dict, Any
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
-log = logging.getLogger("collect_cloud_logs")
+log = logging.getLogger("collect_cloud_logs_no_interactive")
 
 
 def ensure_dir(p: str | Path):
@@ -57,7 +42,7 @@ def retry(fn, tries=3, delay=1, backoff=2, name="operation"):
     raise last_exc
 
 
-# ---------------- AWS helpers/collector ----------------
+# ---------------- AWS ----------------
 def discover_or_create_aws_bucket(preferred: Optional[str] = None) -> Optional[str]:
     try:
         import boto3
@@ -210,8 +195,8 @@ def collect_aws(bucket: str, prefix: str, out_dir: str):
     log.info("AWS: total downloaded %d files", downloaded)
 
 
-# ---------------- GCP (REST-only) ----------------
-import requests  # global import used by GCP REST functions
+# ---------------- GCP (REST-only, token required) ----------------
+import requests  # used for REST calls
 
 
 def _gcp_list_objects_rest(bucket: str, prefix: str, token: str) -> requests.Response:
@@ -219,8 +204,7 @@ def _gcp_list_objects_rest(bucket: str, prefix: str, token: str) -> requests.Res
     url = f"https://storage.googleapis.com/storage/v1/b/{quote_plus(bucket)}/o"
     headers = {"Authorization": f"Bearer {token}"}
     params = {"prefix": prefix} if prefix else {}
-    r = requests.get(url, headers=headers, params=params, timeout=30)
-    return r
+    return requests.get(url, headers=headers, params=params, timeout=30)
 
 
 def _gcp_download_object_rest(bucket: str, name: str, token: str, out_path: str) -> bool:
@@ -306,12 +290,10 @@ def collect_gcp(bucket: str, prefix: str, out_dir: str, token: str):
         log.warning("GCP REST returned 401 Unauthorized for provided token.")
         member = os.environ.get("GCP_GRANT_MEMBER")
         if member:
-            # try to add viewer or creator role (best-effort) via REST if token permits
             if _gcp_add_binding_rest(bucket, member, "roles/storage.objectViewer", token):
                 log.info("Added viewer binding via REST; retrying listing")
                 r2 = _gcp_list_objects_rest(bucket, prefix, token)
                 if r2.status_code == 200:
-                    # proceed with downloads
                     items = r2.json().get("items", [])
                     downloaded = 0
                     for it in items:
@@ -333,7 +315,7 @@ def collect_gcp(bucket: str, prefix: str, out_dir: str, token: str):
     raise RuntimeError(f"GCP listing failed with status {r.status_code}")
 
 
-# ---------------- Azure collector ----------------
+# ---------------- Azure ----------------
 def collect_azure(container: str, prefix: str, out_dir: str):
     from azure.storage.blob import ContainerClient
     ensure_dir(out_dir)
@@ -375,7 +357,7 @@ def collect_azure(container: str, prefix: str, out_dir: str):
         raise
 
 
-# ---------------- simple parser & summary ----------------
+# ---------------- summary ----------------
 def parse_logs_and_summarize(root: Path, out_file: Path):
     summary: Dict[str, Any] = {"total_files": 0, "total_events": 0, "errors": []}
     for p in root.rglob("*"):
@@ -388,7 +370,6 @@ def parse_logs_and_summarize(root: Path, out_file: Path):
             continue
         if "AccessDenied" in text or "access denied" in text.lower():
             summary["errors"].append(str(p))
-        # count lines as events (approx)
         summary["total_events"] += max(0, len([l for l in text.splitlines() if l.strip()]))
     ensure_dir(out_file.parent)
     out_file.write_text(json.dumps(summary, indent=2))
@@ -398,7 +379,7 @@ def parse_logs_and_summarize(root: Path, out_file: Path):
 
 # ---------------- main ----------------
 def main():
-    p = argparse.ArgumentParser(description="Collect cloud logs (GCP uses only an access token, non-interactive)")
+    p = argparse.ArgumentParser(description="Collect cloud logs (non-interactive, GCP uses only access token)")
     p.add_argument("--provider", choices=["aws", "gcp", "azure"], required=True)
     p.add_argument("--bucket", help="S3 or GCS bucket name")
     p.add_argument("--container", help="Azure container name")
@@ -422,7 +403,7 @@ def main():
                 p.error("GCP bucket not specified and none provided in env")
             token = args.gcp_access_token or os.environ.get("GCP_ACCESS_TOKEN")
             if not token:
-                p.error("GCP_ACCESS_TOKEN must be set in env or passed via --gcp-access-token")
+                p.error("GCP_ACCESS_TOKEN must be set in env or passed via --gcp-access-token (non-interactive mode)")
             collect_gcp(bucket, args.prefix, str(out_dir), token)
         elif args.provider == "azure":
             container = args.container or os.environ.get("AZURE_LOG_CONTAINER")
