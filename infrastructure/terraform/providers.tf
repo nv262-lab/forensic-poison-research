@@ -23,18 +23,23 @@ terraform {
       version = ">= 3.0"
     }
   }
+}
 
-  provider "azurerm" {
-    features {}
-    client_id       = var.azure_client_id
-    client_secret   = var.azure_client_secret
-    tenant_id       = var.azure_tenant_id
-    subscription_id  = var.azure_subscription_id
-  }
+# Define the provider blocks outside the terraform block
+provider "aws" {
+  region = var.aws_region
+}
 
-  provider "google" {
-    project     = var.gcp_project
-    region      = var.gcp_region
-    credentials = var.gcp_service_account_key
-  }
+provider "google" {
+  project     = var.gcp_project
+  region      = var.gcp_region
+  credentials = var.gcp_service_account_key
+}
+
+provider "azurerm" {
+  features {}
+  client_id       = var.azure_client_id
+  client_secret   = var.azure_client_secret
+  tenant_id       = var.azure_tenant_id
+  subscription_id  = var.azure_subscription_id
 }
