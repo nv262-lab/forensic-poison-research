@@ -51,11 +51,14 @@ jobs:
           project_id: ${{ secrets.GCP_PROJECT }}
           export_default_credentials: true
 
+      - name: Write GCP Service Account Key to File
+        run: echo "${{ secrets.GCP_SA_KEY }}" > gcp-key.json
+
       - name: Install CLI tools
         run: |
           python -m pip install --upgrade pip
           pip install awscli
-          gcloud --quiet components update || true
+          gcloud --quiet components update
 
       - name: Configure cloud log buckets (project-relative names)
         env:
@@ -129,6 +132,7 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
+          TF_VAR_gcp_service_account_key: gcp-key.json  # Use the path to the key file
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
           TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
