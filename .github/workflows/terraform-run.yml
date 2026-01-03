@@ -27,7 +27,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Write GCP Service Account Key to Terraform working dir
+      - name: Write GCP Service Account Key into Terraform working dir
         run: |
           mkdir -p "${{ env.TF_WORKING_DIR }}"
           printf '%s' "${{ secrets.GCP_SA_KEY }}" > "${{ env.TF_WORKING_DIR }}/gcp-key.json"
@@ -41,7 +41,7 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup gcloud
+      - name: Setup gcloud (optional)
         uses: google-github-actions/setup-gcloud@v1
         with:
           service_account_key: ${{ secrets.GCP_SA_KEY }}
@@ -61,7 +61,6 @@ jobs:
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
           TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX }}
           AWS_REGION: ${{ env.AWS_REGION }}
-          TF_VAR_gcp_service_account_key: ${{ env.TF_WORKING_DIR }}/gcp-key.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
         run: |
           if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
@@ -75,7 +74,6 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
-          TF_VAR_gcp_service_account_key: ${{ env.TF_WORKING_DIR }}/gcp-key.json
           GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
