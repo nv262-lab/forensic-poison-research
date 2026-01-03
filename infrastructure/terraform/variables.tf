@@ -70,6 +70,11 @@ variable "azure_subscription_id" {
   default = ""
 }
 
+variable "prefix" {
+  type    = string
+  default = "rag-forensics-sandbox"
+}
+
 variable "azure_tenant_id" {
   type    = string
   default = ""
