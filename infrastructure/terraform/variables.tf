@@ -37,7 +37,6 @@ variable "gcp_project" {
 
 variable "gcp_access_token" {
   type    = string
-  default = ""
 }
 
 variable "gcp_region" {
