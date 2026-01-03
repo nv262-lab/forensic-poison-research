@@ -9,22 +9,8 @@ terraform {
   }
 }
 
-variable "create_aws"   { type = bool, default = true }
-variable "create_gcp"   { type = bool, default = false }
-variable "create_azure" { type = bool, default = false }
-
-variable "aws_region"       { type = string, default = "us-east-1" }
-variable "tf_state_bucket"  { type = string, default = "" }    # if empty, generated
-variable "tf_lock_table"    { type = string, default = "" }    # if empty, generated
-
-variable "gcp_project" { type = string, default = "" }
-variable "gcp_region"  { type = string, default = "us-central1" }
-variable "gcs_bucket"  { type = string, default = "" }        # if empty, generated
-
-variable "azure_rg_name"         { type = string, default = "" } # if empty, generated
-variable "azure_location"        { type = string, default = "eastus" }
-variable "azure_storage_account" { type = string, default = "" } # if empty, generated
-variable "azure_container_name"  { type = string, default = "tfstate" }
+# NOTE: variables are declared in root providers.tf to avoid duplication.
+# This file references those vars (var.*).
 
 # small random suffix to avoid collisions on repeated CI runs when names not provided
 resource "random_id" "suffix" {
@@ -35,14 +21,13 @@ resource "random_id" "suffix" {
 locals {
   suffix = length(random_id.suffix) > 0 ? random_id.suffix[0].hex : "manual"
 
-  # final names: prefer provided var, else generate using suffix and region hints
   final_tf_state_bucket = length(trimspace(var.tf_state_bucket)) > 0 ? var.tf_state_bucket : "tf-state-${local.suffix}-${substr(var.aws_region,0,6)}"
   final_tf_lock_table   = length(trimspace(var.tf_lock_table)) > 0 ? var.tf_lock_table : "tf-lock-${local.suffix}"
   final_gcs_bucket      = length(trimspace(var.gcs_bucket)) > 0 ? var.gcs_bucket : "tf-state-${local.suffix}-${substr(var.gcp_region,0,6)}"
   final_azure_rg        = length(trimspace(var.azure_rg_name)) > 0 ? var.azure_rg_name : "tf-backend-rg-${local.suffix}"
-  # storage account names must be lowercase and 3-24 chars, letters and numbers only
-  generated_azure_storage = lower(replace("tfstate${local.suffix}", "/[^a-z0-9]/", ""))
-  final_azure_storage   = length(trimspace(var.azure_storage_account)) > 0 ? var.azure_storage_account : local.generated_azure_storage
+
+  generated_azure_storage = lower(regexreplace("tfstate${local.suffix}", "/[^a-z0-9]/", ""))
+  final_azure_storage     = length(trimspace(var.azure_storage_account)) > 0 ? var.azure_storage_account : local.generated_azure_storage
 }
 
 # --------------------
@@ -166,26 +151,26 @@ resource "azurerm_storage_container" "tfstate" {
 # Outputs
 # --------------------
 output "aws_tf_state_bucket" {
-  value       = var.create_aws ? aws_s3_bucket.tf_state[0].bucket : ""
+  value       = var.create_aws ? try(aws_s3_bucket.tf_state[0].bucket, "") : ""
   description = "AWS S3 bucket name for Terraform state (empty if not created)"
 }
 
 output "aws_tf_lock_table" {
-  value       = var.create_aws ? aws_dynamodb_table.tf_lock[0].name : ""
+  value       = var.create_aws ? try(aws_dynamodb_table.tf_lock[0].name, "") : ""
   description = "AWS DynamoDB table name for Terraform locking (empty if not created)"
 }
 
 output "gcp_gcs_bucket" {
-  value       = var.create_gcp ? google_storage_bucket.tf_state[0].name : ""
+  value       = var.create_gcp ? try(google_storage_bucket.tf_state[0].name, "") : ""
   description = "GCS bucket name for Terraform state (empty if not created)"
 }
 
 output "azure_storage_account" {
-  value       = var.create_azure ? azurerm_storage_account.tfstate[0].name : ""
+  value       = var.create_azure ? try(azurerm_storage_account.tfstate[0].name, "") : ""
   description = "Azure storage account name (empty if not created)"
 }
 
 output "azure_container_name" {
-  value       = var.create_azure ? azurerm_storage_container.tfstate[0].name : ""
+  value       = var.create_azure ? try(azurerm_storage_container.tfstate[0].name, "") : ""
   description = "Azure storage container name (empty if not created)"
 }
