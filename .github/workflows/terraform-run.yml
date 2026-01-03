@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TF_WORKING_DIR: infrastructure/terraform
-      TF_KEY_PATH: ${{ github.workspace }}/infrastructure/terraform/gcp-key.json
       AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
       GCP_REGION: ${{ secrets.GCP_REGION }}
 
@@ -27,9 +26,17 @@ jobs:
 
       - name: Write GCP service account key (absolute path)
         run: |
-          mkdir -p "$(dirname "${TF_KEY_PATH}")"
-          printf '%s' "${{ secrets.GCP_SA_KEY }}" > "${TF_KEY_PATH}"
-          chmod 600 "${TF_KEY_PATH}"
+          TF_KEY_PATH="${GITHUB_WORKSPACE}/gcp-key.json"
+          payload="${{ secrets.GCP_SA_KEY }}"
+          # try base64 decode if looks like base64
+          if printf '%s' "$payload" | grep -Eq '^[A-Za-z0-9+/=\n\r]+$' && [ ${#payload} -gt 100 ]; then
+            payload=$(printf '%s' "$payload" | tr -d '\r\n' | base64 --decode 2>/dev/null || printf '%s' "$payload")
+          fi
+          # strip surrounding quotes
+          payload=$(printf '%s' "$payload" | sed -E 's/^"(.*)"$/\1/' | sed 's/\\"/"/g')
+          printf '%s' "$payload" > "$TF_KEY_PATH"
+          chmod 600 "$TF_KEY_PATH"
+          jq -e . "$TF_KEY_PATH" >/dev/null || (echo "GCP key is not valid JSON"; exit 1)
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
