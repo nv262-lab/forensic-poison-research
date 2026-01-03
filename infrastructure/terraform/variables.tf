@@ -35,6 +35,11 @@ variable "gcp_project" {
   default = "indigo-splice-483118-h7"
 }
 
+variable "gcp_access_token" {
+  type    = string
+  default = ""
+}
+
 variable "gcp_region" {
   type    = string
   default = "us-central1"
