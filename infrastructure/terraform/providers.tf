@@ -33,7 +33,7 @@ provider "aws" {
 provider "google" {
   project     = var.gcp_project
   region      = var.gcp_region
-  credentials = jsonencode(var.gcp_service_account_key)
+  credentials = file(var.gcp_service_account_key)
 }
 
 provider "azurerm" {
