@@ -94,6 +94,9 @@ jobs:
           terraform init -input=false -upgrade -lockfile=auto || true
           cat .terraform.lock.hcl || true
 
+      - name: Make setup script executable
+        run: chmod +x .github/scripts/setup_cloud_logs.sh
+
       - name: Configure AWS creds (env)
         if: ${{ env.AWS_ACCESS_KEY_ID != '' }}
         env:
@@ -102,6 +105,7 @@ jobs:
           AWS_DEFAULT_REGION: ${{ env.AWS_DEFAULT_REGION }}
           AWS_LOG_BUCKET: ${{ env.AWS_LOG_BUCKET }}
         run: |
+          .github/scripts/setup_cloud_logs.sh
           export AWS_DEFAULT_REGION=${AWS_DEFAULT_REGION}
           if [ -n "${AWS_LOG_BUCKET}" ]; then
             BUCKET="${AWS_LOG_BUCKET}"
