@@ -213,35 +213,39 @@ jobs:
         run: |
           az login --service-principal -u "${{ secrets.AZURE_CLIENT_ID }}" -p "${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}" >/dev/null
           az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
-          if [ -n "${AZURE_LOG_RG}" ]; then
-            RG="${AZURE_LOG_RG}"
-          else
-            RG="${AZURE_LOG_RG_DEFAULT}"
-          fi
-          if [ -n "${AZURE_LOG_STORAGE}" ]; then
-            STORAGE_NAME="${AZURE_LOG_STORAGE}"
-          elif [ -n "${azure_storage_account:-}" ]; then
-            STORAGE_NAME="${azure_storage_account}"
-          else
-            STORAGE_NAME="${AZURE_LOG_STORAGE_DEFAULT}"
-          fi
+    
+          # Use the default resource group name if not provided
+          RG="${AZURE_LOG_RG:-$AZURE_LOG_RG_DEFAULT}"
+    
+          # Use the default storage account name if not provided
+          STORAGE_NAME="${AZURE_LOG_STORAGE:-$AZURE_LOG_STORAGE_DEFAULT}"
           CONTAINER="rag-logs"
+
+          # Check if the resource group exists
           if az group show -n "$RG" >/dev/null 2>&1; then
-            echo "RG exists: $RG"
-          else
-            az group create -n "$RG" -l eastus || true
-            echo "Created RG $RG"
+             echo "Resource Group exists: $RG"
+             else
+             az group create -n "$RG" -l eastus || true
+             echo "Created Resource Group $RG"
           fi
-          if az storage account check-name --name "$STORAGE_NAME" --query 'nameAvailable' | grep true >/dev/null 2>&1; then
-            az storage account create -n "$STORAGE_NAME" -g "$RG" --sku Standard_LRS || true
-            echo "Created storage account $STORAGE_NAME"
+
+          # Check if the storage account exists in the specified resource group
+          if az storage account show -n "$STORAGE_NAME" -g "$RG" >/dev/null 2>&1; then
+             echo "Storage account already exists: $STORAGE_NAME"
           else
-            echo "Storage account may already exist: $STORAGE_NAME"
+             echo "Creating storage account $STORAGE_NAME..."
+             az storage account create -n "$STORAGE_NAME" -g "$RG" --sku Standard_LRS || true
+             echo "Created storage account $STORAGE_NAME"
           fi
+
+          # Get the connection string for the storage account
           CONN=$(az storage account show-connection-string -n "$STORAGE_NAME" -g "$RG" --query connectionString -o tsv)
           echo "AZURE_STORAGE_CONNECTION_STRING=$CONN" >> $GITHUB_ENV
+    
+          # Create the storage container
           az storage container create --name "$CONTAINER" --connection-string "$CONN" || true
           az storage blob service-properties update --enable-versioning true --account-name "$STORAGE_NAME" || true
+    
           echo "AZURE_LOG_CONTAINER=$CONTAINER" >> $GITHUB_ENV
           echo "AZURE_LOG_STORAGE=$STORAGE_NAME" >> $GITHUB_ENV
           echo "AZURE_LOG_RG=$RG" >> $GITHUB_ENV
