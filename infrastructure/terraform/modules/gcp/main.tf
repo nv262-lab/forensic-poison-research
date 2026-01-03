@@ -6,8 +6,6 @@ resource "google_storage_bucket" "bucket" {
 
   uniform_bucket_level_access = true
 
-  versioning = true
-
   # Optional: Set lifecycle rules if needed
   lifecycle {
     prevent_destroy = false  # Adjust as needed, but force_destroy is already set to true
