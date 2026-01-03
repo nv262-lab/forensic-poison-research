@@ -1,0 +1,176 @@
+# src/rag/detectors/run_all.py
+"""
+Simple detection runner that scans collected cloud logs under data/logs/**
+and emits SIEM events to a JSON file.
+
+This is intentionally lightweight and rule-based so it works without external
+dependencies. Replace or extend the detect function with real detectors.
+"""
+
+from _future_ import annotations
+import json
+import re
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional
+
+LOG_ROOT = Path("data/logs")
+DEFAULT_OUTPUT = Path("data/backups/siem_events.json")
+
+
+def iter_log_files(root: Path = LOG_ROOT) -> Iterable[Path]:
+    if not root.exists():
+        return
+    for p in root.rglob("*"):
+        if p.is_file() and p.suffix in {".log", ".txt", ".json", ".ndjson", ".jsonl"}:
+            yield p
+
+
+def read_lines(path: Path) -> Iterable[str]:
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    yield line
+    except Exception:
+        return
+
+
+def try_parse_json(s: str) -> Optional[Dict[str, Any]]:
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        return None
+    return None
+
+
+def basic_extract_fields(log_obj: Dict[str, Any], raw: str) -> Dict[str, Any]:
+    # Normalize common fields if present
+    fields = {}
+    for k in ("timestamp", "time", "ts", "eventTime", "insertId"):
+        if k in log_obj:
+            fields["timestamp"] = log_obj[k]
+            break
+    for k in ("severity", "level"):
+        if k in log_obj:
+            fields["severity"] = log_obj[k]
+            break
+    for k in ("protoPayload", "message", "msg", "message_text"):
+        if k in log_obj:
+            fields["message"] = log_obj.get(k)
+            break
+    # fallback
+    if "message" not in fields:
+        fields["message"] = raw
+    return fields
+
+
+# Simple rule set -- extend as needed
+RULES = [
+    {
+        "id": "suspicious_auth_failure",
+        "description": "Repeated failed authentication or unauthorized access",
+        "pattern": re.compile(r"unauthoriz|unauth|authentication failed|failed login", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "s3_bucket_access",
+        "description": "S3/GCS/Blob object access events",
+        "pattern": re.compile(r"(s3|gs|blob).*object|storage.objects", re.I),
+        "severity": "info",
+    },
+    {
+        "id": "console_login",
+        "description": "Console login detected (possible interactive access)",
+        "pattern": re.compile(r"console.*login|login from|signIn", re.I),
+        "severity": "medium",
+    },
+    {
+        "id": "iam_changes",
+        "description": "IAM or permission change event",
+        "pattern": re.compile(r"(iam|role|policy|permission).*change|put-role|set-iam", re.I),
+        "severity": "high",
+    },
+    {
+        "id": "data_exfil",
+        "description": "Large object read/download or suspicious data transfer",
+        "pattern": re.compile(r"(GetObject|storage.objects.get|Download|read).*", re.I),
+        "severity": "critical",
+    },
+]
+
+
+def detect_log_entry(raw: str, source_path: Path) -> List[Dict[str, Any]]:
+    events = []
+    parsed = try_parse_json(raw)
+    base = {"source": str(source_path)}
+    if parsed:
+        fields = basic_extract_fields(parsed, raw)
+        msg = fields.get("message", "")
+    else:
+        fields = {"message": raw}
+        msg = raw
+
+    # Apply rules
+    for r in RULES:
+        if r["pattern"].search(msg):
+            ev = {
+                "id": r["id"],
+                "description": r["description"],
+                "severity": r["severity"],
+                "message": fields.get("message"),
+                "timestamp": fields.get("timestamp"),
+                "source_file": str(source_path),
+            }
+            # include raw JSON if parsed
+            if parsed:
+                ev["raw"] = parsed
+            events.append(ev)
+
+    return events
+
+
+def run_all(output: str | Path = DEFAULT_OUTPUT) -> List[Dict[str, Any]]:
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    all_events: List[Dict[str, Any]] = []
+    for f in iter_log_files(LOG_ROOT):
+        for line in read_lines(f):
+            try:
+                events = detect_log_entry(line, f)
+                all_events.extend(events)
+            except Exception:
+                # continue on per-line errors
+                continue
+
+    # Deduplicate simple duplicates
+    seen = set()
+    deduped: List[Dict[str, Any]] = []
+    for e in all_events:
+        key = (e.get("id"), e.get("message"), e.get("source_file"), e.get("timestamp"))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(e)
+
+    # Write output
+    try:
+        with out_path.open("w", encoding="utf-8") as fh:
+            json.dump({"events": deduped, "count": len(deduped)}, fh, indent=2)
+    except Exception as exc:
+        raise RuntimeError(f"failed to write output {out_path}: {exc}")
+
+    return deduped
+
+
+if _name_ == "_main_":
+    import argparse
+
+    p = argparse.ArgumentParser(description="Run simple detectors over collected logs")
+    p.add_argument("--output", "-o", default=str(DEFAULT_OUTPUT), help="Output JSON path")
+    args = p.parse_args()
+    events = run_all(output=args.output)
+    print(f"Emitted {len(events)} SIEM events to {args.output}")
