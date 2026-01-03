@@ -24,15 +24,3 @@ terraform {
     }
   }
 }
-
-provider "aws" {
-  region = var.aws_region
-}
-
-provider "google" {
-  region  = var.gcp_region
-}
-
-provider "azurerm" {
-  features {}
-}
