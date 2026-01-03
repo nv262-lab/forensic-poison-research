@@ -146,7 +146,10 @@ jobs:
           echo "TF_VAR_gcs_bucket=${{ secrets.BACKEND_GCS_BUCKET || '' }}" >> $GITHUB_ENV
           echo "TF_VAR_create_aws=${{ secrets.BACKEND_CREATE_AWS || 'true' }}" >> $GITHUB_ENV
           echo "TF_VAR_create_gcp=${{ secrets.BACKEND_CREATE_GCP || 'false' }}" >> $GITHUB_ENV
+          echo "TF_VAR_gcp_service_account_key=${{ secrets.GCP_SA_KEY }}" >> $GITHUB_ENV
           echo "TF_VAR_create_azure=${{ secrets.BACKEND_CREATE_AZURE || 'false' }}" >> $GITHUB_ENV
+          echo "TF_VAR_azure_client_id=${{ secrets.AZURE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "TF_VAR_azure_client_secret=${{ secrets.AZURE_CLIENT_SECRET }}" >> $GITHUB_ENV
           echo "TF_VAR_azure_tenant_id=${{ secrets.AZURE_TENANT_ID }}" >> $GITHUB_ENV
           echo "TF_VAR_azure_subscription_id =${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
       # ------------------------
