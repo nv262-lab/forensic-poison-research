@@ -6,7 +6,7 @@ resource "azurerm_resource_group" "rg" {
   }
 }
 
-variable "prefix" {
+variable "azprefix" {
   type = string
 }
 
