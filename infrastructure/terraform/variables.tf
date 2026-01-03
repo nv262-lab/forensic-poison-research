@@ -32,7 +32,7 @@ variable "tf_lock_table" {
 
 variable "gcp_project" {
   type    = string
-  default = ""
+  default = "indigo-splice-483118-h7"
 }
 
 variable "gcp_region" {
