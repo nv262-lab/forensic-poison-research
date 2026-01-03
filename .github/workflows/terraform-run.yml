@@ -24,15 +24,23 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Debug GCP Service Account Key
+        run: echo "GCP Service Account Key Length: ${#secrets.GCP_SA_KEY}"
+
       - name: Write GCP service account key
         run: |
           TF_KEY_PATH="${GITHUB_WORKSPACE}/gcp-key.json"
           payload="${{ secrets.GCP_SA_KEY }}"
 
+          echo "Initial Payload Length: ${#payload}"
+
           # Try base64 decode if it looks like base64
           if printf '%s' "$payload" | grep -Eq '^[A-Za-z0-9+/=]+$' && [ ${#payload} -gt 100 ]; then
+            echo "Decoding base64 payload..."
             payload=$(printf '%s' "$payload" | tr -d '\r\n' | base64 --decode 2>/dev/null || printf '%s' "$payload")
           fi
+
+          echo "Decoded Payload Length: ${#payload}"
 
           # Strip surrounding quotes
           payload=$(printf '%s' "$payload" | sed -E 's/^"(.*)"$/\1/' | sed 's/\\"/"/g')
