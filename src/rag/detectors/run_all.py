@@ -7,7 +7,7 @@ This is intentionally lightweight and rule-based so it works without external
 dependencies. Replace or extend the detect function with real detectors.
 """
 
-from _future_ import annotations
+from __future__ import annotations
 import json
 import re
 from pathlib import Path
