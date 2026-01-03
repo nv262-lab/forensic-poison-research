@@ -111,7 +111,9 @@ jobs:
           echo "GOOGLE_APPLICATION_CREDENTIALS=/tmp/gcp_key.json" >> $GITHUB_ENV
 
       - name: Validate GCP identity
-        run: gcloud auth list --format="value(account)" || true
+        run: |
+          gcloud auth list --format="value(account)" || true
+          gcloud auth application-default login
 
       - name: Login to Azure (action)
         uses: azure/login@v1
@@ -125,7 +127,12 @@ jobs:
             }
 
       - name: Validate Azure account
-        run: az account show --query "{id:id, user:user.name}" -o json
+        run: |
+          az account show --query "{id:id, user:user.name}" -o json
+          az login --service-principal \
+            -u ${{ secrets.AZURE_CLIENT_ID }} \
+            -p ${{ secrets.AZURE_CLIENT_SECRET }} \
+            --tenant ${{ secrets.AZURE_TENANT_ID }}
 
       # Export TF_VARs for backend apply (from repository secrets)
       - name: Export TF_VARs for backend workspace
