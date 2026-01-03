@@ -9,10 +9,8 @@ terraform {
   }
 }
 
-# NOTE: variables are declared in root providers.tf to avoid duplication.
-# This file references those vars (var.*).
+# Use variables declared in variables.tf (no duplicates here)
 
-# small random suffix to avoid collisions on repeated CI runs when names not provided
 resource "random_id" "suffix" {
   count       = 1
   byte_length = 3
@@ -30,9 +28,7 @@ locals {
   final_azure_storage     = length(trimspace(var.azure_storage_account)) > 0 ? var.azure_storage_account : local.generated_azure_storage
 }
 
-# --------------------
-# AWS: S3 bucket + DynamoDB table for locking
-# --------------------
+# AWS S3 bucket + DynamoDB lock table
 resource "aws_s3_bucket" "tf_state" {
   count  = var.create_aws ? 1 : 0
   bucket = local.final_tf_state_bucket
@@ -92,9 +88,7 @@ resource "aws_dynamodb_table" "tf_lock" {
   }
 }
 
-# --------------------
-# GCP: GCS bucket for state
-# --------------------
+# GCP: GCS bucket
 resource "google_storage_bucket" "tf_state" {
   count         = var.create_gcp ? 1 : 0
   name          = local.final_gcs_bucket
@@ -110,9 +104,7 @@ resource "google_storage_bucket" "tf_state" {
   }
 }
 
-# --------------------
-# Azure: Storage account + container for state
-# --------------------
+# Azure: RG, storage account and container
 resource "azurerm_resource_group" "backend" {
   count    = var.create_azure ? 1 : 0
   name     = local.final_azure_rg
@@ -141,15 +133,13 @@ resource "azurerm_storage_account" "tfstate" {
 }
 
 resource "azurerm_storage_container" "tfstate" {
-  count                = var.create_azure ? 1 : 0
-  name                 = var.azure_container_name
-  storage_account_name = azurerm_storage_account.tfstate[0].name
+  count                 = var.create_azure ? 1 : 0
+  name                  = var.azure_container_name
+  storage_account_name  = azurerm_storage_account.tfstate[0].name
   container_access_type = "private"
 }
 
-# --------------------
 # Outputs
-# --------------------
 output "aws_tf_state_bucket" {
   value       = var.create_aws ? try(aws_s3_bucket.tf_state[0].bucket, "") : ""
   description = "AWS S3 bucket name for Terraform state (empty if not created)"
