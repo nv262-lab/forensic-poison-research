@@ -35,6 +35,11 @@ variable "gcp_project" {
   default = "indigo-splice-483118-h7"
 }
 
+variable "gcp_service_account_key" {
+  description = "The path to the service account key file"
+  type        = string
+}
+
 variable "gcp_region" {
   type    = string
   default = "us-central1"
@@ -66,6 +71,16 @@ variable "azure_container_name" {
 }
 
 variable "azure_subscription_id" {
+  type    = string
+  default = ""
+}
+
+variable "azure_client_id" {
+  type    = string
+  default = ""
+}
+
+variable "azure_client_secret" {
   type    = string
   default = ""
 }
