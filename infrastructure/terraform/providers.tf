@@ -1,36 +1,24 @@
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 4.0"
-    }
-    azurerm = {
-      source  = "hashicorp/azurerm"
-      version = "~> 3.0"
-    }
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 4.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
-}
+# infrastructure/terraform/backend/providers.tf
 
 provider "aws" {
   region = var.aws_region
-}
-
-provider "azurerm" {
-  features {}
-  subscription_id = var.azure_subscription_id
+  
+  # GitHub Actions will use OIDC or static credentials from environment variables
+  # No explicit configuration needed - AWS provider auto-detects credentials
 }
 
 provider "google" {
   project = var.gcp_project
   region  = var.gcp_region
+  
+  # Credentials come from GOOGLE_CREDENTIALS environment variable in CI
+  # or from gcloud CLI locally
 }
 
-provider "random" {}
+provider "azurerm" {
+  features {}
+  
+  # For GitHub Actions, credentials come from environment variables or OIDC
+  # For local development, use 'az login'
+  skip_provider_registration = true
+}
