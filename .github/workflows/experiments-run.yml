@@ -151,28 +151,17 @@ jobs:
           AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
           AWS_LOG_BUCKET: ${{ secrets.AWS_LOG_BUCKET || '' }}
         run: |
-          .github/scripts/setup_cloud_logs.sh
-          export AWS_DEFAULT_REGION=${{ secrets.AWS_DEFAULT_REGION }}
-          if [ -n "${AWS_LOG_BUCKET}" ]; then
-            BUCKET="${AWS_LOG_BUCKET}"
-          elif [ -n "${aws_tf_state_bucket:-}" ]; then
-            BUCKET="${aws_tf_state_bucket}"
+          # Check existing CloudTrail trails
+          existing_trails=$(aws cloudtrail describe-trails --query 'trailList[*].Name' --output text)
+          if [ $(echo "$existing_trails" | wc -w) -ge 5 ]; then
+            echo "Maximum number of trails reached. Existing trails: $existing_trails"
+            echo "Skipping creation of a new trail."
           else
-            BUCKET="${AWS_LOG_BUCKET_DEFAULT}"
+            TRAIL_NAME="rag-forensic-trail-${{ github.run_id }}"
+            aws cloudtrail create-trail --name "$TRAIL_NAME" --s3-bucket-name "$BUCKET" || true
+            aws cloudtrail put-event-selectors --trail-name "$TRAIL_NAME" --event-selectors '[{"ReadWriteType":"All","IncludeManagementEvents":true,"DataResources":[{"Type":"AWS::S3::Object","Values":["arn:aws:s3:::'"$BUCKET"'/"]}]}]' || true
+            aws cloudtrail start-logging --name "$TRAIL_NAME" || true
           fi
-          echo "Using S3 bucket: $BUCKET"
-          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            echo "S3 bucket exists: $BUCKET"
-          else
-            aws s3api create-bucket --bucket "$BUCKET" --create-bucket-configuration LocationConstraint=${{ secrets.AWS_DEFAULT_REGION }} || true
-            echo "Created bucket $BUCKET"
-          fi
-          aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled || true
-          TRAIL_NAME="rag-forensic-trail-${{ github.run_id }}"
-          aws cloudtrail create-trail --name "$TRAIL_NAME" --s3-bucket-name "$BUCKET" || true
-          aws cloudtrail put-event-selectors --trail-name "$TRAIL_NAME" --event-selectors '[{"ReadWriteType":"All","IncludeManagementEvents":true,"DataResources":[{"Type":"AWS::S3::Object","Values":["arn:aws:s3:::'"$BUCKET"'/"]}]}]' || true
-          aws cloudtrail start-logging --name "$TRAIL_NAME" || true
-          echo "AWS_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
       - name: Configure GCP creds & create bucket
         env:
@@ -202,6 +191,7 @@ jobs:
           gcloud logging sinks create "$SINK_NAME" "storage.googleapis.com/$BUCKET" --project="${{ secrets.GCP_PROJECT }}" --log-filter='resource.type="gcs_bucket" OR protoPayload.methodName:("storage.objects.insert" OR "storage.objects.update")' || true
           echo "GCP_LOG_BUCKET=$BUCKET" >> $GITHUB_ENV
 
+      # Update this section in your Azure configuration
       - name: Configure Azure and create storage container
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -214,42 +204,40 @@ jobs:
           az login --service-principal -u "${{ secrets.AZURE_CLIENT_ID }}" -p "${{ secrets.AZURE_CLIENT_SECRET }}" --tenant "${{ secrets.AZURE_TENANT_ID }}" >/dev/null
           az account set --subscription "${{ secrets.AZURE_SUBSCRIPTION_ID }}"
     
-          # Use the default resource group name if not provided
           RG="${AZURE_LOG_RG:-$AZURE_LOG_RG_DEFAULT}"
     
-          # Use the default storage account name if not provided
+          # Generate a valid storage account name
           STORAGE_NAME="${AZURE_LOG_STORAGE:-$AZURE_LOG_STORAGE_DEFAULT}"
+          STORAGE_NAME=$(echo "$STORAGE_NAME" | tr '[:upper:]' '[:lower:]' | tr -d '[:punct:]' | cut -c1-24) # Ensure it is lowercase, removes punctuation, and limits to 24 characters
+
           CONTAINER="rag-logs"
 
           # Check if the resource group exists
           if az group show -n "$RG" >/dev/null 2>&1; then
-             echo "Resource Group exists: $RG"
-             else
-             az group create -n "$RG" -l eastus || true
-             echo "Created Resource Group $RG"
+            echo "Resource Group exists: $RG"
+          else
+            az group create -n "$RG" -l eastus || true
+            echo "Created Resource Group $RG"
           fi
 
-          # Check if the storage account exists in the specified resource group
-          if az storage account show -n "$STORAGE_NAME" -g "$RG" >/dev/null 2>&1; then
+           # Check if the storage account exists
+           if az storage account show -n "$STORAGE_NAME" -g "$RG" >/dev/null 2>&1; then
              echo "Storage account already exists: $STORAGE_NAME"
-          else
+           else
              echo "Creating storage account $STORAGE_NAME..."
              az storage account create -n "$STORAGE_NAME" -g "$RG" --sku Standard_LRS || true
              echo "Created storage account $STORAGE_NAME"
-          fi
+           fi
 
-          # Get the connection string for the storage account
-          CONN=$(az storage account show-connection-string -n "$STORAGE_NAME" -g "$RG" --query connectionString -o tsv)
-          echo "AZURE_STORAGE_CONNECTION_STRING=$CONN" >> $GITHUB_ENV
+           # Get the connection string
+           CONN=$(az storage account show-connection-string -n "$STORAGE_NAME" -g "$RG" --query connectionString -o tsv)
+           echo "AZURE_STORAGE_CONNECTION_STRING=$CONN" >> $GITHUB_ENV
+           az storage container create --name "$CONTAINER" --connection-string "$CONN" || true
+           az storage blob service-properties update --enable-versioning true --account-name "$STORAGE_NAME" || true
+           echo "AZURE_LOG_CONTAINER=$CONTAINER" >> $GITHUB_ENV
+           echo "AZURE_LOG_STORAGE=$STORAGE_NAME" >> $GITHUB_ENV
+           echo "AZURE_LOG_RG=$RG" >> $GITHUB_ENV
     
-          # Create the storage container
-          az storage container create --name "$CONTAINER" --connection-string "$CONN" || true
-          az storage blob service-properties update --enable-versioning true --account-name "$STORAGE_NAME" || true
-    
-          echo "AZURE_LOG_CONTAINER=$CONTAINER" >> $GITHUB_ENV
-          echo "AZURE_LOG_STORAGE=$STORAGE_NAME" >> $GITHUB_ENV
-          echo "AZURE_LOG_RG=$RG" >> $GITHUB_ENV
-
       - name: Export RAG public key
         env:
           RAG_RSA_PUB: ${{ secrets.RAG_RSA_PUB || '' }}
