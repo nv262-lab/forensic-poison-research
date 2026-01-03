@@ -252,8 +252,15 @@ jobs:
 
       - name: Build local index
         run: |
-          python3 -c "import json; docs=[import('json').loads(l) for l in open('src/rag/data/corpus/corpus.jsonl')]; from src.rag.vectorstore.faiss_store import FaissStore; FaissStore('data/faiss_index').build(docs)"
+          python3 -c "
+          import json
+          from src.rag.vectorstore.faiss_store import FaissStore
 
+          with open('src/rag/data/corpus/corpus.jsonl') as f:
+              docs = [json.loads(line) for line in f]
+
+          FaissStore('data/faiss_index').build(docs)
+          "
       - name: Run scenarios
         run: python3 src/rag/experiments/runner.py --scenarios all --count 1
 
