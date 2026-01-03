@@ -89,6 +89,11 @@ variable "azprefix" {
   default = "rag-forensics"
 }
 
+variable "prefix" {
+  type    = string
+  default = "rag-forensics-sandbox"
+}
+
 variable "azure_tenant_id" {
   type    = string
   default = ""
