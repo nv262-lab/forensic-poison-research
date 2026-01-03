@@ -13,11 +13,9 @@ permissions:
 jobs:
   ci-terraform:
     runs-on: ubuntu-latest
-
     env:
       TF_WORKING_DIR: infrastructure/terraform
-      CI_REPO: ${{ github.repository }}
-      CI_RUN_ID: ${{ github.run_id }}
+      TF_KEY_PATH: ${{ github.workspace }}/infrastructure/terraform/gcp-key.json
       AWS_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
       GCP_REGION: ${{ secrets.GCP_REGION }}
 
@@ -27,11 +25,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Write GCP Service Account Key into Terraform working dir
+      - name: Write GCP service account key (absolute path)
         run: |
-          mkdir -p "${{ env.TF_WORKING_DIR }}"
-          printf '%s' "${{ secrets.GCP_SA_KEY }}" > "${{ env.TF_WORKING_DIR }}/gcp-key.json"
-          chmod 600 "${{ env.TF_WORKING_DIR }}/gcp-key.json"
+          mkdir -p "$(dirname "${TF_KEY_PATH}")"
+          printf '%s' "${{ secrets.GCP_SA_KEY }}" > "${TF_KEY_PATH}"
+          chmod 600 "${TF_KEY_PATH}"
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
@@ -56,34 +54,12 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_KEY_PATH }}
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
           TF_LOCK_TABLE: ${{ secrets.TF_LOCK_TABLE }}
           TF_STATE_PREFIX: ${{ secrets.TF_STATE_PREFIX }}
           AWS_REGION: ${{ env.AWS_REGION }}
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
         run: |
           if [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_KEY:-}" ]; then
-            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="key=${TF_STATE_KEY}" -backend-config="region=${AWS_REGION}" -backend-config="dynamodb_table=${TF_LOCK_TABLE}" -input=false
-          elif [ -n "${TF_STATE_BUCKET:-}" ] && [ -n "${TF_STATE_PREFIX:-}" ]; then
-            terraform init -backend-config="bucket=${TF_STATE_BUCKET}" -backend-config="prefix=${TF_STATE_PREFIX}" -input=false
-          else
-            terraform init -input=false
-          fi
-
-      - name: Terraform plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
-          TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
-          TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          TF_VAR_azure_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
-          TF_VAR_azure_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: terraform plan -out=tfplan -input=false
-
-      - name: Terraform apply (auto-approve on main)
-        if: github.ref == 'refs/heads/main' && success()
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        env:
-          GOOGLE_APPLICATION_CREDENTIALS: ${{ env.TF_WORKING_DIR }}/gcp-key.json
-        run: terraform apply -input=false -auto-approve tfplan
+            terraform init -backend-config="bucket=${TF_STATE_BUCKET
