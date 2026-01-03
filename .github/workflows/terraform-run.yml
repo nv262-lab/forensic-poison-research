@@ -35,11 +35,6 @@ jobs:
           aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup gcloud with Access Token
-        run: |
-          echo "Activating GCP credentials..."
-          echo "${{ secrets.GCP_ACCESS_TOKEN }}" | gcloud auth activate-service-account --key-file=-
-          
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
@@ -48,6 +43,7 @@ jobs:
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: /path/to/service-account.json # If using a service account
           GCP_ACCESS_TOKEN: ${{ secrets.GCP_ACCESS_TOKEN }} # Use directly
           TF_STATE_BUCKET: ${{ secrets.TF_STATE_BUCKET }}
           TF_STATE_KEY: ${{ secrets.TF_STATE_KEY }}
@@ -60,6 +56,7 @@ jobs:
       - name: Terraform plan
         working-directory: ${{ env.TF_WORKING_DIR }}
         env:
+          GOOGLE_APPLICATION_CREDENTIALS: /path/to/service-account.json # If using
           GCP_ACCESS_TOKEN: ${{ secrets.GCP_ACCESS_TOKEN }} # Use directly
           TF_VAR_azure_client_id: ${{ secrets.AZURE_CLIENT_ID }}
           TF_VAR_azure_client_secret: ${{ secrets.AZURE_CLIENT_SECRET }}
